@@ -519,6 +519,150 @@ describe("GET /media/*", () => {
   });
 });
 
+describe("books", () => {
+  function linkBook(quoteId: number, bookId: number) {
+    db.run(`UPDATE quotes SET book_id = ${bookId} WHERE id = ${quoteId}`);
+  }
+
+  function fixture() {
+    const hobb = s.book({ assetId: "HOBB", title: "Fool's Errand", author: "Robin Hobb" });
+    const dune = s.book({ title: "Dune", author: "Frank Herbert" });
+    const reposted = s.quote({ text: "Hope is a dangerous thing", author: "Robin Hobb" });
+    const once = s.quote({ text: "Second Hobb quote", author: "Robin Hobb" });
+    const never = s.quote({ text: "Third Hobb quote", author: "Robin Hobb" });
+    for (const q of [reposted, once, never]) linkBook(q.id, hobb.id);
+    const p1 = s.posting(reposted.id, {
+      postedAt: "2026-01-01T00:00:00.000Z",
+      permalink: "https://instagram.com/p/one",
+      mediaPath: "a.jpg",
+      likes: 10,
+      comments: 1,
+    });
+    const p2 = s.posting(reposted.id, {
+      postedAt: "2026-10-25T00:00:00.000Z",
+      permalink: "https://instagram.com/p/two",
+      mediaPath: "sub/b c.png",
+      likes: 30,
+      comments: 4,
+    });
+    s.posting(once.id, { postedAt: "2026-05-01T00:00:00.000Z" });
+    const loose = s.highlight({
+      bookId: hobb.id,
+      text: "An unposted highlight",
+      createdAt: "2025-09-09T00:00:00.000Z",
+    });
+    return { hobb, dune, reposted, once, never, p1, p2, loose };
+  }
+
+  test("GET /api/books lists books with counts, sorted and searchable", async () => {
+    const { hobb, dune } = fixture();
+    const r = await get("/api/books");
+    expect(r.status).toBe(200);
+    expect(r.body.items).toEqual([
+      {
+        id: dune.id,
+        assetId: dune.assetId,
+        title: "Dune",
+        author: "Frank Herbert",
+        source: "apple_books",
+        quoteCount: 0,
+        postedCount: 0,
+        unpostedHighlightCount: 0,
+        lastPostedAt: null,
+      },
+      {
+        id: hobb.id,
+        assetId: "HOBB",
+        title: "Fool's Errand",
+        author: "Robin Hobb",
+        source: "apple_books",
+        quoteCount: 3,
+        postedCount: 2,
+        unpostedHighlightCount: 1,
+        lastPostedAt: "2026-10-25T00:00:00.000Z",
+      },
+    ]);
+    const byQuotes = await get("/api/books?sort=quotes");
+    expect(byQuotes.body.items.map((b: { id: number }) => b.id)).toEqual([hobb.id, dune.id]);
+    const q = await get("/api/books?q=herbert");
+    expect(q.body.items.map((b: { id: number }) => b.id)).toEqual([dune.id]);
+    expectError(await get("/api/books?sort=nope"), 400);
+  });
+
+  test("GET /api/books/:id splits posted and unposted entries with postings", async () => {
+    const { hobb, reposted, once, never, p1, p2, loose } = fixture();
+    const r = await get(`/api/books/${hobb.id}`);
+    expect(r.status).toBe(200);
+    expect(r.body.book).toMatchObject({ id: hobb.id, quoteCount: 3, postedCount: 2 });
+
+    const entries = r.body.entries as Array<{
+      kind: string;
+      quoteId: number | null;
+      highlightId: number | null;
+      posted: boolean;
+      postings: unknown[];
+    }>;
+    expect(entries.map((e) => [e.kind, e.quoteId ?? e.highlightId, e.posted])).toEqual([
+      ["quote", reposted.id, true],
+      ["quote", once.id, true],
+      ["quote", never.id, false],
+      ["highlight", loose.id, false],
+    ]);
+    expect(entries[0]?.postings).toEqual([
+      {
+        postId: p1.id,
+        postedAt: "2026-01-01T00:00:00.000Z",
+        likes: 10,
+        comments: 1,
+        permalink: "https://instagram.com/p/one",
+        mediaPath: "a.jpg",
+        mediaUrl: "/media/a.jpg",
+      },
+      {
+        postId: p2.id,
+        postedAt: "2026-10-25T00:00:00.000Z",
+        likes: 30,
+        comments: 4,
+        permalink: "https://instagram.com/p/two",
+        mediaPath: "sub/b c.png",
+        mediaUrl: "/media/sub/b%20c.png",
+      },
+    ]);
+    expect(entries[3]).toMatchObject({
+      text: "An unposted highlight",
+      highlightedAt: "2025-09-09T00:00:00.000Z",
+      postings: [],
+    });
+  });
+
+  test("GET /api/books/:id: 404 on unknown, 400 on non-numeric", async () => {
+    expectError(await get("/api/books/999"), 404);
+    expectError(await get("/api/books/abc"), 400);
+  });
+
+  test("quote search rows and quote detail include the linked book", async () => {
+    const { hobb, reposted } = fixture();
+    const book = { id: hobb.id, title: "Fool's Errand", author: "Robin Hobb" };
+    const search = await get("/api/quotes?q=hope");
+    expect(search.body.items[0].book).toEqual(book);
+    const detail = await get(`/api/quotes/${reposted.id}`);
+    expect(detail.body.book).toEqual(book);
+    const plain = s.quote({ text: "No book" });
+    expect((await get(`/api/quotes/${plain.id}`)).body.book).toBeNull();
+  });
+
+  test("PATCH sourceTitle links the quote to a book", async () => {
+    const q = s.quote({ text: "Edit me", author: "Robin Hobb" });
+    const r = await send("PATCH", `/api/quotes/${q.id}`, { sourceTitle: "Fool’s Errand" });
+    expect(r.status).toBe(200);
+    expect(r.body.quote.bookId).toEqual(expect.any(Number));
+    const books = await get("/api/books");
+    expect(books.body.items).toEqual([
+      expect.objectContaining({ id: r.body.quote.bookId, title: "Fool’s Errand", quoteCount: 1 }),
+    ]);
+  });
+});
+
 test("unknown /api route returns JSON 404", async () => {
   expectError(await get("/api/nope"), 404);
 });

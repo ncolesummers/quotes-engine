@@ -59,19 +59,35 @@ export function migrate(db: Database, dir: string | URL = DEFAULT_MIGRATIONS_DIR
     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?1, ?2, ?3)",
   );
 
+  const pending = loadMigrations(dir).filter((m) => !done.has(m.version));
+  if (pending.length === 0) return [];
+
+  // Foreign keys are off while migrations run (SQLite's procedure for table rebuilds: dropping
+  // a parent table would otherwise cascade into its children) and checked before each commit.
+  // The pragma is a no-op inside a transaction, so it is toggled around them.
+  const fkWasOn =
+    db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get()?.foreign_keys === 1;
+  if (fkWasOn) db.run("PRAGMA foreign_keys = OFF");
   const applied: string[] = [];
-  for (const m of loadMigrations(dir)) {
-    if (done.has(m.version)) continue;
-    try {
-      db.transaction(() => {
-        db.run(m.sql);
-        record.run(m.version, m.name, new Date().toISOString());
-      })();
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      throw new Error(`Migration ${m.name} failed: ${reason}`, { cause: err });
+  try {
+    for (const m of pending) {
+      try {
+        db.transaction(() => {
+          db.run(m.sql);
+          const violations = db.query("PRAGMA foreign_key_check").all();
+          if (violations.length > 0) {
+            throw new Error(`leaves ${violations.length} foreign key violation(s)`);
+          }
+          record.run(m.version, m.name, new Date().toISOString());
+        })();
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(`Migration ${m.name} failed: ${reason}`, { cause: err });
+      }
+      applied.push(m.name);
     }
-    applied.push(m.name);
+  } finally {
+    if (fkWasOn) db.run("PRAGMA foreign_keys = ON");
   }
   return applied;
 }

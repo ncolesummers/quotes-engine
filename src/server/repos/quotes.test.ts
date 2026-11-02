@@ -8,6 +8,7 @@ import {
   mergeQuotes,
   type SearchQuotesParams,
   searchQuotes,
+  updateQuote,
   upsertQuote,
 } from "./quotes";
 
@@ -324,5 +325,93 @@ describe("mergeQuotes", () => {
     const q = upsertQuote(db, { text: "A quote" }).quote;
     expect(() => mergeQuotes(db, q.id, q.id)).toThrow();
     expect(() => mergeQuotes(db, q.id, 999)).toThrow();
+  });
+});
+
+describe("book linking", () => {
+  function bookTitle(bookId: number | null): string | null {
+    if (bookId === null) return null;
+    return (db.query(`SELECT title FROM books WHERE id = ${bookId}`).get() as { title: string })
+      .title;
+  }
+
+  test("upsertQuote links a new quote with a sourceTitle to a book", () => {
+    const a = upsertQuote(db, {
+      text: "Hope is a dangerous thing.",
+      author: "Robin Hobb",
+      sourceTitle: "Fool’s Errand",
+    }).quote;
+    const b = upsertQuote(db, {
+      text: "Something else entirely here.",
+      author: "Robin Hobb",
+      sourceTitle: "Fool's Errand",
+    }).quote;
+    expect(a.bookId).not.toBeNull();
+    expect(b.bookId).toBe(a.bookId);
+    expect(bookTitle(a.bookId)).toBe("Fool’s Errand");
+    expect(upsertQuote(db, { text: "No source at all, friend." }).quote.bookId).toBeNull();
+  });
+
+  test("upsertQuote links an existing quote that had no book", () => {
+    const first = upsertQuote(db, { text: "The obstacle is the way." }).quote;
+    expect(first.bookId).toBeNull();
+    const again = upsertQuote(db, {
+      text: "The obstacle is the way",
+      author: "Marcus Aurelius",
+      sourceTitle: "Meditations",
+    });
+    expect(again.match).toBe("existing");
+    expect(again.quote.id).toBe(first.id);
+    expect(bookTitle(again.quote.bookId)).toBe("Meditations");
+  });
+
+  test("updateQuote relinks on a sourceTitle or author change and unlinks on clear", () => {
+    const q = upsertQuote(db, { text: "Words to live by.", sourceTitle: "Dune" }).quote;
+    const dune = q.bookId;
+
+    const renamed = updateQuote(db, q.id, { sourceTitle: "Children of Dune" });
+    if (renamed.status !== "updated") throw new Error(renamed.status);
+    expect(renamed.quote.bookId).not.toBe(dune);
+    expect(bookTitle(renamed.quote.bookId)).toBe("Children of Dune");
+
+    const authored = updateQuote(db, q.id, { author: "Frank Herbert" });
+    if (authored.status !== "updated") throw new Error(authored.status);
+    // The title-only book is adopted and gains the author.
+    expect(authored.quote.bookId).toBe(renamed.quote.bookId);
+
+    const cleared = updateQuote(db, q.id, { sourceTitle: null });
+    if (cleared.status !== "updated") throw new Error(cleared.status);
+    expect(cleared.quote.bookId).toBeNull();
+
+    const notes = updateQuote(db, q.id, { notes: "hm" });
+    if (notes.status !== "updated") throw new Error(notes.status);
+    expect(notes.quote.bookId).toBeNull();
+  });
+
+  test("search rows and quote detail carry the linked book", () => {
+    const q = upsertQuote(db, {
+      text: "Fear is the mind-killer.",
+      author: "Frank Herbert",
+      sourceTitle: "Dune",
+    }).quote;
+    upsertQuote(db, { text: "Unbooked words here." });
+    const book = { id: q.bookId as number, title: "Dune", author: "Frank Herbert" };
+
+    const rows = search();
+    expect(rows.items.find((r) => r.id === q.id)?.book).toEqual(book);
+    expect(rows.items.find((r) => r.id !== q.id)?.book).toBeNull();
+    expect(getQuoteDetail(db, q.id)?.book).toEqual(book);
+  });
+
+  test("search by book matches the linked book's title", () => {
+    const q = upsertQuote(db, { text: "Linked by hand.", sourceTitle: "x" }).quote;
+    db.run(`UPDATE books SET title = 'The Linked Book' WHERE id = ${q.bookId}`);
+    expect(search({ book: "linked book" }).items.map((r) => r.id)).toEqual([q.id]);
+  });
+
+  test("mergeQuotes keeps the dropped quote's book when keep has none", () => {
+    const keep = upsertQuote(db, { text: "Keep this one please." }).quote;
+    const drop = upsertQuote(db, { text: "Drop that one now.", sourceTitle: "Dune" }).quote;
+    expect(mergeQuotes(db, keep.id, drop.id).bookId).toBe(drop.bookId);
   });
 });

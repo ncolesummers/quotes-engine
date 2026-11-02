@@ -1,6 +1,7 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { normalizeQuote } from "../text/normalize";
 import { classifyMatch, normalizedSimilarity } from "../text/similarity";
+import { type BookRef, type BookSource, findOrCreateBook, getBook, getBookRef } from "./books";
 
 export interface Quote {
   id: number;
@@ -9,6 +10,8 @@ export interface Quote {
   author: string | null;
   sourceTitle: string | null;
   notes: string | null;
+  /** The book `sourceTitle` resolved to (see `findOrCreateBook`), or null. */
+  bookId: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -17,6 +20,8 @@ export interface QuoteInput {
   text: string;
   author?: string | null;
   sourceTitle?: string | null;
+  /** `source` for a book created from `sourceTitle`. Default "manual". */
+  bookSource?: BookSource;
 }
 
 export type QuoteMatch = "new" | "existing" | "likely";
@@ -54,6 +59,7 @@ export interface SearchQuotesParams {
 }
 
 export interface QuoteSearchRow extends Quote {
+  book: BookRef | null;
   postingCount: number;
   totalLikes: number;
   maxLikes: number | null;
@@ -82,6 +88,7 @@ export interface QuotePosting {
 
 export interface QuoteDetail {
   quote: Quote;
+  book: BookRef | null;
   postings: QuotePosting[];
 }
 
@@ -89,7 +96,7 @@ const NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 const QUOTE_COLUMNS = `
   q.id, q.text, q.normalized_text AS normalizedText, q.author, q.source_title AS sourceTitle,
-  q.notes, q.created_at AS createdAt, q.updated_at AS updatedAt`;
+  q.notes, q.book_id AS bookId, q.created_at AS createdAt, q.updated_at AS updatedAt`;
 
 export function getQuote(db: Database, id: number): Quote | null {
   return db
@@ -103,15 +110,33 @@ function requireQuote(db: Database, id: number): Quote {
   return quote;
 }
 
-/** Fill a quote's missing author/source from `input`; never overwrites existing values. */
+/** Id of the book for `sourceTitle`/`author` (created if needed), or null without a title. */
+function resolveBookId(
+  db: Database,
+  sourceTitle: string | null | undefined,
+  author: string | null | undefined,
+  source: BookSource = "manual",
+): number | null {
+  if (!sourceTitle) return null;
+  return findOrCreateBook(db, { title: sourceTitle, author, source })?.id ?? null;
+}
+
+/**
+ * Fill a quote's missing author/source/book from `input`; never overwrites existing values.
+ * The book is resolved from the quote's (possibly just filled) source title.
+ */
 function fillMissing(db: Database, quote: Quote, input: QuoteInput): Quote {
   const author = quote.author ?? input.author ?? null;
   const sourceTitle = quote.sourceTitle ?? input.sourceTitle ?? null;
-  if (author === quote.author && sourceTitle === quote.sourceTitle) return quote;
+  const bookId = quote.bookId ?? resolveBookId(db, sourceTitle, author, input.bookSource);
+  if (author === quote.author && sourceTitle === quote.sourceTitle && bookId === quote.bookId) {
+    return quote;
+  }
   db.query(
-    `UPDATE quotes SET author = $author, source_title = $sourceTitle, updated_at = ${NOW_SQL}
+    `UPDATE quotes SET author = $author, source_title = $sourceTitle, book_id = $bookId,
+       updated_at = ${NOW_SQL}
      WHERE id = $id`,
-  ).run({ id: quote.id, author, sourceTitle });
+  ).run({ id: quote.id, author, sourceTitle, bookId });
   return requireQuote(db, quote.id);
 }
 
@@ -155,15 +180,16 @@ export function upsertQuote(db: Database, input: QuoteInput): UpsertQuoteResult 
     }
 
     const inserted = db
-      .query<{ id: number }, Record<string, string | null>>(
-        `INSERT INTO quotes (text, normalized_text, author, source_title)
-         VALUES ($text, $normalized, $author, $sourceTitle) RETURNING id`,
+      .query<{ id: number }, Record<string, string | number | null>>(
+        `INSERT INTO quotes (text, normalized_text, author, source_title, book_id)
+         VALUES ($text, $normalized, $author, $sourceTitle, $bookId) RETURNING id`,
       )
       .get({
         text: input.text.trim(),
         normalized,
         author: input.author ?? null,
         sourceTitle: input.sourceTitle ?? null,
+        bookId: resolveBookId(db, input.sourceTitle, input.author, input.bookSource),
       });
     if (!inserted) throw new Error("Quote insert returned no row");
     const quote = requireQuote(db, inserted.id);
@@ -234,7 +260,8 @@ export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSea
     binds.author = likeContains(params.author);
   }
   if (params.book) {
-    where.push(`(q.source_title LIKE $book ESCAPE '\\' OR EXISTS (
+    where.push(`(q.source_title LIKE $book ESCAPE '\\' OR bk.title LIKE $book ESCAPE '\\'
+      OR EXISTS (
       SELECT 1 FROM highlights h JOIN books b ON b.id = h.book_id
       WHERE h.quote_id = q.id AND b.title LIKE $book ESCAPE '\\'))`);
     binds.book = likeContains(params.book);
@@ -252,8 +279,10 @@ export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSea
       COALESCE(SUM(p.like_count), 0) AS totalLikes,
       MAX(p.like_count) AS maxLikes,
       COALESCE(SUM(p.comments_count), 0) AS totalComments,
-      MAX(p.posted_at) AS lastPostedAt
+      MAX(p.posted_at) AS lastPostedAt,
+      bk.title AS bookTitle, bk.author AS bookAuthor
     FROM quotes q
+    LEFT JOIN books bk ON bk.id = q.book_id
     LEFT JOIN post_quotes pq ON pq.quote_id = q.id
     LEFT JOIN posts p ON p.id = pq.post_id
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -264,12 +293,19 @@ export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSea
     db.query<{ n: number }, SQLQueryBindings>(`SELECT COUNT(*) AS n FROM (${filtered})`).get(binds)
       ?.n ?? 0;
   const items = db
-    .query<QuoteSearchRow, SQLQueryBindings>(
+    .query<
+      Omit<QuoteSearchRow, "book"> & { bookTitle: string | null; bookAuthor: string | null },
+      SQLQueryBindings
+    >(
       `${filtered}
        ORDER BY ${SORT_SQL[params.sort]}, lastPostedAt DESC NULLS LAST, q.id DESC
        LIMIT $limit OFFSET $offset`,
     )
-    .all({ ...binds, limit: params.limit, offset: params.offset });
+    .all({ ...binds, limit: params.limit, offset: params.offset })
+    .map(({ bookTitle, bookAuthor, ...row }) => ({
+      ...row,
+      book: row.bookId === null ? null : { id: row.bookId, title: bookTitle, author: bookAuthor },
+    }));
   return { items, total };
 }
 
@@ -287,7 +323,7 @@ export function getQuoteDetail(db: Database, id: number): QuoteDetail | null {
        ORDER BY p.posted_at, p.id`,
     )
     .all({ id });
-  return { quote, postings };
+  return { quote, book: getBookRef(db, quote.bookId), postings };
 }
 
 /**
@@ -310,6 +346,7 @@ export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote
          author = COALESCE(author, (SELECT author FROM quotes WHERE id = $dropId)),
          source_title = COALESCE(source_title, (SELECT source_title FROM quotes WHERE id = $dropId)),
          notes = COALESCE(notes, (SELECT notes FROM quotes WHERE id = $dropId)),
+         book_id = COALESCE(book_id, (SELECT book_id FROM quotes WHERE id = $dropId)),
          updated_at = ${NOW_SQL}
        WHERE id = $keepId`,
     ).run(ids);
@@ -339,12 +376,33 @@ const PATCH_COLUMNS = [
 ] as const;
 
 /**
+ * The book a quote should link to after `patch`, or undefined to leave it. A new or cleared
+ * source title re-resolves (or unlinks) the book. An author change alone re-resolves only
+ * when the quote has no book yet or its book has no author, since the quote's author may be
+ * a character rather than the book's author.
+ */
+function relinkedBookId(
+  db: Database,
+  current: Quote,
+  patch: QuotePatch,
+): number | null | undefined {
+  const sourceTitle = patch.sourceTitle === undefined ? current.sourceTitle : patch.sourceTitle;
+  const author = patch.author === undefined ? current.author : patch.author;
+  if (patch.sourceTitle !== undefined) return resolveBookId(db, sourceTitle, author);
+  if (patch.author === undefined || !sourceTitle) return undefined;
+  const book = current.bookId === null ? null : getBook(db, current.bookId);
+  if (book?.author) return undefined;
+  return resolveBookId(db, sourceTitle, author);
+}
+
+/**
  * Update a quote's editable fields; undefined fields are kept. A new `text` is trimmed and its
  * `normalized_text` recomputed; it must not normalize to empty or collide with another quote.
  */
 export function updateQuote(db: Database, id: number, patch: QuotePatch): UpdateQuoteResult {
   return db.transaction((): UpdateQuoteResult => {
-    if (!getQuote(db, id)) return { status: "not_found" };
+    const current = getQuote(db, id);
+    if (!current) return { status: "not_found" };
     const sets: string[] = [];
     const binds: Record<string, string | number | null> = { id };
 
@@ -366,6 +424,11 @@ export function updateQuote(db: Database, id: number, patch: QuotePatch): Update
       if (value === undefined) continue;
       sets.push(`${column} = $${key}`);
       binds[key] = value;
+    }
+    const bookId = relinkedBookId(db, current, patch);
+    if (bookId !== undefined) {
+      sets.push("book_id = $bookId");
+      binds.bookId = bookId;
     }
     if (sets.length) {
       db.query(`UPDATE quotes SET ${sets.join(", ")}, updated_at = ${NOW_SQL} WHERE id = $id`).run(

@@ -136,6 +136,8 @@ function importResult(db: Database, result: ExtractionResult, extractedAt: strin
       text: q.text,
       author: q.author,
       sourceTitle: q.source,
+      // Links the quote to its book (found or created) whenever `source` is present.
+      bookSource: "caption",
     });
     const status: LinkStatus =
       q.confidence < REVIEW_CONFIDENCE_THRESHOLD || match === "likely"
