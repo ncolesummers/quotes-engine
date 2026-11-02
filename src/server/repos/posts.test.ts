@@ -1,7 +1,14 @@
 import type { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createTestDb } from "../../../test/helpers/db";
-import { getPost, listUnextractedPosts, markExtracted, recordMetrics, upsertPost } from "./posts";
+import {
+  getPost,
+  getPostByIgMediaId,
+  listUnextractedPosts,
+  markExtracted,
+  recordMetrics,
+  upsertPost,
+} from "./posts";
 
 let db: Database;
 
@@ -89,5 +96,13 @@ describe("listUnextractedPosts / markExtracted", () => {
     markExtracted(db, b.id, "2026-02-01T00:00:00.000Z");
     expect(listUnextractedPosts(db).map((p) => p.id)).toEqual([a.id]);
     expect(getPost(db, b.id)?.extractedAt).toBe("2026-02-01T00:00:00.000Z");
+  });
+});
+
+describe("getPostByIgMediaId", () => {
+  test("returns the post with that ig_media_id, or null when unknown", () => {
+    const post = upsertPost(db, { igMediaId: "ig1", caption: "Hello" });
+    expect(getPostByIgMediaId(db, "ig1")).toEqual(post);
+    expect(getPostByIgMediaId(db, "missing")).toBeNull();
   });
 });
