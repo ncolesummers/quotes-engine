@@ -1,0 +1,311 @@
+import type { Database, SQLQueryBindings } from "bun:sqlite";
+import { normalizeQuote } from "../text/normalize";
+import { classifyMatch, normalizedSimilarity } from "../text/similarity";
+
+export interface Quote {
+  id: number;
+  text: string;
+  normalizedText: string;
+  author: string | null;
+  sourceTitle: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuoteInput {
+  text: string;
+  author?: string | null;
+  sourceTitle?: string | null;
+}
+
+export type QuoteMatch = "new" | "existing" | "likely";
+
+export interface UpsertQuoteResult {
+  quote: Quote;
+  match: QuoteMatch;
+  /** Set when `match` is "likely": the existing quote the new one probably duplicates. */
+  candidateId?: number;
+}
+
+export type LinkMethod = "caption" | "image" | "manual";
+export type LinkStatus = "confirmed" | "needs_review";
+
+export interface LinkOptions {
+  method: LinkMethod;
+  confidence: number | null;
+  status: LinkStatus;
+}
+
+export type QuoteSort = "likes" | "comments" | "recent" | "postings";
+
+export interface SearchQuotesParams {
+  /** Free-text search over text, author and source (FTS5, prefix match per word). */
+  q?: string;
+  /** Literal substring of the author; case-insensitive for ASCII (SQLite LIKE). */
+  author?: string;
+  /** Like `author`, matched against the source title or a linked highlight's book title. */
+  book?: string;
+  posted?: "yes" | "no";
+  minPostings?: number;
+  sort: QuoteSort;
+  limit: number;
+  offset: number;
+}
+
+export interface QuoteSearchRow extends Quote {
+  postingCount: number;
+  totalLikes: number;
+  maxLikes: number | null;
+  totalComments: number;
+  lastPostedAt: string | null;
+}
+
+export interface QuoteSearchResult {
+  items: QuoteSearchRow[];
+  /** Total matching rows, ignoring limit/offset. */
+  total: number;
+}
+
+export interface QuotePosting {
+  postId: number;
+  igMediaId: string;
+  permalink: string | null;
+  mediaPath: string | null;
+  postedAt: string | null;
+  likes: number | null;
+  comments: number | null;
+  method: LinkMethod;
+  confidence: number | null;
+  status: LinkStatus;
+}
+
+export interface QuoteDetail {
+  quote: Quote;
+  postings: QuotePosting[];
+}
+
+const NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+
+const QUOTE_COLUMNS = `
+  q.id, q.text, q.normalized_text AS normalizedText, q.author, q.source_title AS sourceTitle,
+  q.notes, q.created_at AS createdAt, q.updated_at AS updatedAt`;
+
+export function getQuote(db: Database, id: number): Quote | null {
+  return db
+    .query<Quote, { id: number }>(`SELECT ${QUOTE_COLUMNS} FROM quotes q WHERE q.id = $id`)
+    .get({ id });
+}
+
+function requireQuote(db: Database, id: number): Quote {
+  const quote = getQuote(db, id);
+  if (!quote) throw new Error(`Quote ${id} not found`);
+  return quote;
+}
+
+/** Fill a quote's missing author/source from `input`; never overwrites existing values. */
+function fillMissing(db: Database, quote: Quote, input: QuoteInput): Quote {
+  const author = quote.author ?? input.author ?? null;
+  const sourceTitle = quote.sourceTitle ?? input.sourceTitle ?? null;
+  if (author === quote.author && sourceTitle === quote.sourceTitle) return quote;
+  db.query(
+    `UPDATE quotes SET author = $author, source_title = $sourceTitle, updated_at = ${NOW_SQL}
+     WHERE id = $id`,
+  ).run({ id: quote.id, author, sourceTitle });
+  return requireQuote(db, quote.id);
+}
+
+/** Best fuzzy match among existing quotes. A linear scan: the catalog is small. */
+function bestCandidate(db: Database, normalized: string): { id: number; score: number } | null {
+  let best: { id: number; score: number } | null = null;
+  const rows = db
+    .query<{ id: number; normalizedText: string }, []>(
+      "SELECT id, normalized_text AS normalizedText FROM quotes",
+    )
+    .all();
+  for (const row of rows) {
+    const score = normalizedSimilarity(normalized, row.normalizedText);
+    if (!best || score > best.score) best = { id: row.id, score };
+  }
+  return best;
+}
+
+/**
+ * Insert a quote unless it duplicates an existing one.
+ * - Same `normalized_text`, or a fuzzy "same" score: returns the existing quote (`existing`),
+ *   filling in its author/source if they were missing.
+ * - Fuzzy "likely" score: inserts the quote and reports `candidateId` for review (`likely`).
+ * - Otherwise inserts it (`new`).
+ */
+export function upsertQuote(db: Database, input: QuoteInput): UpsertQuoteResult {
+  const normalized = normalizeQuote(input.text);
+  if (!normalized) throw new Error("Quote text is empty after normalization");
+
+  return db.transaction((): UpsertQuoteResult => {
+    const exact = db
+      .query<{ id: number }, { normalized: string }>(
+        "SELECT id FROM quotes WHERE normalized_text = $normalized",
+      )
+      .get({ normalized });
+    const candidate = exact ? { id: exact.id, score: 1 } : bestCandidate(db, normalized);
+    const match = candidate ? classifyMatch(candidate.score) : "different";
+
+    if (candidate && match === "same") {
+      return { quote: fillMissing(db, requireQuote(db, candidate.id), input), match: "existing" };
+    }
+
+    const inserted = db
+      .query<{ id: number }, Record<string, string | null>>(
+        `INSERT INTO quotes (text, normalized_text, author, source_title)
+         VALUES ($text, $normalized, $author, $sourceTitle) RETURNING id`,
+      )
+      .get({
+        text: input.text.trim(),
+        normalized,
+        author: input.author ?? null,
+        sourceTitle: input.sourceTitle ?? null,
+      });
+    if (!inserted) throw new Error("Quote insert returned no row");
+    const quote = requireQuote(db, inserted.id);
+
+    if (candidate && match === "likely") {
+      return { quote, match: "likely", candidateId: candidate.id };
+    }
+    return { quote, match: "new" };
+  })();
+}
+
+/** Link a post to a quote. Idempotent: an existing link (and its status) is left untouched. */
+export function linkPostQuote(
+  db: Database,
+  postId: number,
+  quoteId: number,
+  { method, confidence, status }: LinkOptions,
+): void {
+  db.query(
+    `INSERT INTO post_quotes (post_id, quote_id, method, confidence, status)
+     VALUES ($postId, $quoteId, $method, $confidence, $status)
+     ON CONFLICT (post_id, quote_id) DO NOTHING`,
+  ).run({ postId, quoteId, method, confidence, status });
+}
+
+/**
+ * Escape free text into an FTS5 query: each word becomes a quoted prefix term ("word"*),
+ * implicitly ANDed. FTS operators and stray quotes in the input are treated as plain words or
+ * dropped. Returns null when the input has no searchable words.
+ */
+export function toFtsQuery(q: string): string | null {
+  const words = q.match(/[\p{L}\p{M}\p{N}]+/gu);
+  return words ? words.map((w) => `"${w}"*`).join(" ") : null;
+}
+
+const SORT_SQL: Record<QuoteSort, string> = {
+  likes: "totalLikes DESC",
+  comments: "totalComments DESC",
+  postings: "postingCount DESC",
+  recent: "lastPostedAt DESC NULLS LAST",
+};
+
+/** LIKE pattern matching `s` as a literal substring (with `ESCAPE '\'`). */
+function likeContains(s: string): string {
+  return `%${s.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
+export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSearchResult {
+  const where: string[] = [];
+  const having: string[] = [];
+  const binds: Record<string, string | number> = {};
+
+  const match = params.q ? toFtsQuery(params.q) : null;
+  if (match) {
+    where.push("q.id IN (SELECT rowid FROM quotes_fts WHERE quotes_fts MATCH $match)");
+    binds.match = match;
+  }
+  if (params.author) {
+    where.push("q.author LIKE $author ESCAPE '\\'");
+    binds.author = likeContains(params.author);
+  }
+  if (params.book) {
+    where.push(`(q.source_title LIKE $book ESCAPE '\\' OR EXISTS (
+      SELECT 1 FROM highlights h JOIN books b ON b.id = h.book_id
+      WHERE h.quote_id = q.id AND b.title LIKE $book ESCAPE '\\'))`);
+    binds.book = likeContains(params.book);
+  }
+  if (params.posted === "yes") having.push("postingCount > 0");
+  if (params.posted === "no") having.push("postingCount = 0");
+  if (params.minPostings !== undefined) {
+    having.push("postingCount >= $minPostings");
+    binds.minPostings = params.minPostings;
+  }
+
+  const filtered = `
+    SELECT ${QUOTE_COLUMNS},
+      COUNT(p.id) AS postingCount,
+      COALESCE(SUM(p.like_count), 0) AS totalLikes,
+      MAX(p.like_count) AS maxLikes,
+      COALESCE(SUM(p.comments_count), 0) AS totalComments,
+      MAX(p.posted_at) AS lastPostedAt
+    FROM quotes q
+    LEFT JOIN post_quotes pq ON pq.quote_id = q.id
+    LEFT JOIN posts p ON p.id = pq.post_id
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    GROUP BY q.id
+    ${having.length ? `HAVING ${having.join(" AND ")}` : ""}`;
+
+  const total =
+    db.query<{ n: number }, SQLQueryBindings>(`SELECT COUNT(*) AS n FROM (${filtered})`).get(binds)
+      ?.n ?? 0;
+  const items = db
+    .query<QuoteSearchRow, SQLQueryBindings>(
+      `${filtered}
+       ORDER BY ${SORT_SQL[params.sort]}, lastPostedAt DESC NULLS LAST, q.id DESC
+       LIMIT $limit OFFSET $offset`,
+    )
+    .all({ ...binds, limit: params.limit, offset: params.offset });
+  return { items, total };
+}
+
+/** A quote and every post it appeared on, oldest first. Null if the quote doesn't exist. */
+export function getQuoteDetail(db: Database, id: number): QuoteDetail | null {
+  const quote = getQuote(db, id);
+  if (!quote) return null;
+  const postings = db
+    .query<QuotePosting, { id: number }>(
+      `SELECT p.id AS postId, p.ig_media_id AS igMediaId, p.permalink, p.media_path AS mediaPath,
+         p.posted_at AS postedAt, p.like_count AS likes, p.comments_count AS comments,
+         pq.method, pq.confidence, pq.status
+       FROM post_quotes pq JOIN posts p ON p.id = pq.post_id
+       WHERE pq.quote_id = $id
+       ORDER BY p.posted_at, p.id`,
+    )
+    .all({ id });
+  return { quote, postings };
+}
+
+/**
+ * Merge `dropId` into `keepId`: moves post links (keeping keep's link where both share a post)
+ * and highlights, fills keep's missing author/source/notes from drop, then deletes drop.
+ */
+export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote {
+  if (keepId === dropId) throw new Error("Cannot merge a quote into itself");
+  return db.transaction((): Quote => {
+    requireQuote(db, keepId);
+    requireQuote(db, dropId);
+    const ids = { keepId, dropId };
+    db.query(
+      `INSERT OR IGNORE INTO post_quotes (post_id, quote_id, method, confidence, status)
+       SELECT post_id, $keepId, method, confidence, status FROM post_quotes WHERE quote_id = $dropId`,
+    ).run(ids);
+    db.query("UPDATE highlights SET quote_id = $keepId WHERE quote_id = $dropId").run(ids);
+    db.query(
+      `UPDATE quotes SET
+         author = COALESCE(author, (SELECT author FROM quotes WHERE id = $dropId)),
+         source_title = COALESCE(source_title, (SELECT source_title FROM quotes WHERE id = $dropId)),
+         notes = COALESCE(notes, (SELECT notes FROM quotes WHERE id = $dropId)),
+         updated_at = ${NOW_SQL}
+       WHERE id = $keepId`,
+    ).run(ids);
+    db.query("DELETE FROM quotes WHERE id = $dropId").run({ dropId });
+    return requireQuote(db, keepId);
+  })();
+}

@@ -19,8 +19,14 @@ function trigrams(s: string): Set<string> {
  * Two strings that normalize to the same value (including both empty) score 1.
  */
 export function trigramSimilarity(a: string, b: string): number {
-  const na = normalizeQuote(a);
-  const nb = normalizeQuote(b);
+  return normalizedSimilarity(normalizeQuote(a), normalizeQuote(b));
+}
+
+/**
+ * Like `trigramSimilarity`, for strings already passed through `normalizeQuote` (e.g. stored
+ * `normalized_text`), skipping the normalization cost when scanning many candidates.
+ */
+export function normalizedSimilarity(na: string, nb: string): number {
   if (na === nb) return 1;
   if (!na || !nb) return 0;
 
