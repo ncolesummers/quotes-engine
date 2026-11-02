@@ -1,9 +1,9 @@
-import { ExternalLinkIcon, HeartIcon, ImageOffIcon, MessageCircleIcon } from "lucide-react";
-import { useState } from "react";
+import { ExternalLinkIcon, HeartIcon, MessageCircleIcon } from "lucide-react";
 import type { LinkMethod, Posting } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PostThumbnail } from "./PostThumbnail";
 
 const METHOD_LABEL: Record<LinkMethod, string> = {
   caption: "Caption",
@@ -42,29 +42,6 @@ function Metric({
   );
 }
 
-function Thumbnail({ posting, date }: { posting: Posting; date: string | null }) {
-  // A media file missing on disk 404s; show the placeholder instead of a broken image.
-  const [failed, setFailed] = useState(false);
-  const frame =
-    "size-20 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted sm:size-24";
-  if (!posting.mediaUrl || failed) {
-    return (
-      <div aria-hidden className={cn(frame, "flex items-center justify-center")}>
-        <ImageOffIcon className="size-5 text-muted-foreground/60" />
-      </div>
-    );
-  }
-  return (
-    <img
-      src={posting.mediaUrl}
-      alt={date ? `Instagram post from ${date}` : "Instagram post"}
-      loading="lazy"
-      onError={() => setFailed(true)}
-      className={cn(frame, "object-cover")}
-    />
-  );
-}
-
 /** Every posting of the quote, oldest first, as a vertical timeline. */
 export function PostingsTimeline({ postings }: { postings: Posting[] }) {
   return (
@@ -83,7 +60,7 @@ export function PostingsTimeline({ postings }: { postings: Posting[] }) {
                 : "border-border/70",
             )}
           >
-            <Thumbnail posting={p} date={date} />
+            <PostThumbnail mediaUrl={p.mediaUrl} date={date} />
             <div className="flex min-w-0 flex-1 flex-col gap-2.5">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="font-serif text-sm text-muted-foreground italic">

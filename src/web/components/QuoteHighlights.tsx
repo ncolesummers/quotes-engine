@@ -33,7 +33,7 @@ export function QuoteHighlights({ highlights }: { highlights: QuoteHighlight[] }
               <p className="mt-3 flex flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
                 {h.book.title ? (
                   <Link
-                    href={bookHref(h.book.title)}
+                    href={bookHref(h.book.title, h.book.id)}
                     className="font-serif text-sm italic text-foreground/80 underline-offset-4 hover:text-primary hover:underline"
                   >
                     {h.book.title}

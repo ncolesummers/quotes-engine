@@ -1,19 +1,11 @@
-import { Route, Switch, useSearchParams } from "wouter";
+import { Route, Switch } from "wouter";
+import { BookDetailPage } from "@/pages/BookDetailPage";
+import { BooksPage } from "@/pages/BooksPage";
 import { NotFoundPage, PlaceholderPage } from "@/pages/PlaceholderPage";
 import { QuoteDetailPage } from "@/pages/QuoteDetailPage";
 import { SearchPage } from "@/pages/SearchPage";
 
-function BooksPlaceholder() {
-  const [params] = useSearchParams();
-  const q = params.get("q");
-  return (
-    <PlaceholderPage title="Books">
-      <p>{q ? `Book pages for “${q}” arrive with #25.` : "Book pages arrive with #25."}</p>
-    </PlaceholderPage>
-  );
-}
-
-/** Route table. Replace placeholders as their issues land (#25 books, ...). */
+/** Route table. Replace placeholders as their issues land. */
 export function AppRoutes() {
   return (
     <Switch>
@@ -22,7 +14,10 @@ export function AppRoutes() {
         {/* Keyed so another quote starts fresh (no drafts or dialog state carried over). */}
         {(params) => <QuoteDetailPage key={params.id} id={params.id} />}
       </Route>
-      <Route path="/books" component={BooksPlaceholder} />
+      <Route path="/books" component={BooksPage} />
+      <Route path="/books/:id">
+        {(params) => <BookDetailPage key={params.id} id={params.id} />}
+      </Route>
       <Route path="/highlights">
         <PlaceholderPage title="Highlights">
           <p>Apple Books highlights waiting their turn arrive in a later issue.</p>

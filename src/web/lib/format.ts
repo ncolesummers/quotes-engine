@@ -17,7 +17,8 @@ export function formatDate(iso: string | null | undefined): string | null {
   return Number.isNaN(date.getTime()) ? null : dateFormat.format(date);
 }
 
-/** `/books?q=<title>` (until #25 adds book pages). */
-export function bookHref(title: string): string {
+/** The book page (`/books/:id`) when the id is known, else a books search by title. */
+export function bookHref(title: string, id?: number | null): string {
+  if (id != null) return `/books/${id}`;
   return `/books?q=${encodeURIComponent(title)}`;
 }

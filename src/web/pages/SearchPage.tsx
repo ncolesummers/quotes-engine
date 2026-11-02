@@ -1,12 +1,12 @@
 import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 import { SearchIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId } from "react";
 import { useSearchParams } from "wouter";
 import { fetchQuotes, type QuoteSort } from "@/api";
 import { QuoteCard } from "@/components/QuoteCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useUrlSearch } from "@/hooks/use-url-search";
 import { formatNumber } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
 
@@ -24,45 +24,11 @@ function parseSort(value: string | null): QuoteSort {
   return SORTS.some((s) => s.value === value) ? (value as QuoteSort) : "recent";
 }
 
-/**
- * The URL (`?q=`, `?sort=`) is the source of truth for the search. The input keeps a local
- * draft so typing stays responsive; the draft is written back to the URL after it settles.
- */
-function useUrlSearch() {
+/** `?q=` (see `useUrlSearch`) and `?sort=` drive the search. */
+function useQuoteSearch() {
   const [params, setParams] = useSearchParams();
-  const q = params.get("q") ?? "";
   const sort = parseSort(params.get("sort"));
-
-  const [draft, setDraft] = useState(q);
-  const debounced = useDebouncedValue(draft.trim(), SEARCH_DEBOUNCE_MS);
-  const lastWritten = useRef(q);
-  const lastDebounced = useRef(debounced);
-
-  // Draft settled -> URL (replace, so each keystroke doesn't add a history entry). Only a new
-  // debounced value writes: when `q` changes from outside, the stale draft must not undo it.
-  useEffect(() => {
-    if (debounced === lastDebounced.current) return;
-    lastDebounced.current = debounced;
-    if (debounced === q) return;
-    lastWritten.current = debounced;
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (debounced) next.set("q", debounced);
-        else next.delete("q");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [debounced, q, setParams]);
-
-  // URL changed elsewhere (back button, a link) -> draft.
-  useEffect(() => {
-    if (q !== lastWritten.current) {
-      lastWritten.current = q;
-      setDraft(q);
-    }
-  }, [q]);
+  const { q, draft, setDraft } = useUrlSearch(SEARCH_DEBOUNCE_MS);
 
   const setSort = (value: QuoteSort) =>
     setParams(
@@ -89,7 +55,7 @@ function ResultSkeleton() {
 }
 
 export function SearchPage() {
-  const { q, sort, draft, setDraft, setSort } = useUrlSearch();
+  const { q, sort, draft, setDraft, setSort } = useQuoteSearch();
   const inputId = useId();
   const sortId = useId();
 

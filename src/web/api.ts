@@ -77,11 +77,21 @@ export interface Quote {
   author: string | null;
   sourceTitle: string | null;
   notes: string | null;
+  /** The book `sourceTitle` resolved to, or null. */
+  bookId: number | null;
   createdAt: string;
   updatedAt: string;
 }
 
+/** The slice of a book shown next to a quote. */
+export interface BookRef {
+  id: number;
+  title: string | null;
+  author: string | null;
+}
+
 export interface QuoteSearchItem extends Quote {
+  book: BookRef | null;
   postingCount: number;
   totalLikes: number;
   maxLikes: number | null;
@@ -119,6 +129,7 @@ export interface QuoteHighlight {
 
 export interface QuoteDetail {
   quote: Quote;
+  book: BookRef | null;
   postings: Posting[];
   highlights: QuoteHighlight[];
 }
@@ -159,6 +170,60 @@ export interface Stats {
   needsReview: number;
 }
 
+export type BookSource = "apple_books" | "caption" | "manual";
+export type BookSort = "title" | "quotes" | "posted" | "recent";
+
+/** One book of `GET /api/books`. */
+export interface BookSummary {
+  id: number;
+  assetId: string | null;
+  title: string | null;
+  author: string | null;
+  source: BookSource;
+  quoteCount: number;
+  /** Quotes made into at least one pic (post). */
+  postedCount: number;
+  /** Highlights not posted and not already one of the book's quotes. */
+  unpostedHighlightCount: number;
+  lastPostedAt: string | null;
+}
+
+export interface BookEntryPosting {
+  postId: number;
+  postedAt: string | null;
+  likes: number | null;
+  comments: number | null;
+  permalink: string | null;
+  mediaPath: string | null;
+  /** `/media/<file>` when the post's image was downloaded, else null. */
+  mediaUrl: string | null;
+}
+
+/** A quote from the book, or an unposted Apple Books highlight. */
+export interface BookEntry {
+  kind: "quote" | "highlight";
+  quoteId: number | null;
+  highlightId: number | null;
+  text: string | null;
+  author: string | null;
+  note: string | null;
+  location: string | null;
+  posted: boolean;
+  highlightedAt: string | null;
+  /** Oldest first. */
+  postings: BookEntryPosting[];
+}
+
+export interface BookDetail {
+  book: BookSummary;
+  entries: BookEntry[];
+}
+
+export interface BookListParams {
+  q?: string;
+  sort?: BookSort;
+}
+
 // ---------------------------------------------------------------------------
 // Endpoints
 
@@ -168,6 +233,14 @@ export function fetchQuotes(params: QuoteSearchParams = {}): Promise<Page<QuoteS
 
 export function fetchStats(): Promise<Stats> {
   return apiGet("/api/stats");
+}
+
+export function fetchBooks(params: BookListParams = {}): Promise<{ items: BookSummary[] }> {
+  return apiGet("/api/books", { ...params });
+}
+
+export function fetchBookDetail(id: number): Promise<BookDetail> {
+  return apiGet(`/api/books/${id}`);
 }
 
 export function fetchQuoteDetail(id: number): Promise<QuoteDetail> {

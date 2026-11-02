@@ -71,6 +71,8 @@ export function quoteItem(overrides: Record<string, unknown> = {}) {
     maxLikes: 10,
     totalComments: 2,
     lastPostedAt: "2026-01-01T00:00:00.000Z",
+    bookId: null,
+    book: null,
     ...overrides,
   };
 }
@@ -100,6 +102,7 @@ export function quoteDetail(
     quote?: Record<string, unknown>;
     postings?: ReturnType<typeof postingItem>[];
     highlights?: unknown[];
+    book?: { id: number; title: string | null; author: string | null } | null;
   } = {},
 ) {
   const {
@@ -108,12 +111,62 @@ export function quoteDetail(
     maxLikes: _ml,
     totalComments: _tc,
     lastPostedAt: _lp,
+    book: _book,
     ...quote
   } = quoteItem(overrides.quote);
   return {
     quote,
     postings: overrides.postings ?? [postingItem()],
     highlights: overrides.highlights ?? [],
+    book: overrides.book ?? null,
+  };
+}
+
+/** One `GET /api/books` item (also `book` of `GET /api/books/:id`). */
+export function bookSummary(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    assetId: null,
+    title: "Fool's Errand",
+    author: "Robin Hobb",
+    source: "caption" as const,
+    quoteCount: 3,
+    postedCount: 2,
+    unpostedHighlightCount: 1,
+    lastPostedAt: "2026-10-25T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** One posting of a book entry. */
+export function bookPosting(overrides: Record<string, unknown> = {}) {
+  const postId = (overrides.postId as number | undefined) ?? 1;
+  return {
+    postId,
+    postedAt: "2026-01-01T12:00:00.000Z",
+    likes: 10,
+    comments: 2,
+    permalink: `https://www.instagram.com/p/post${postId}/`,
+    mediaPath: `${postId}.jpg`,
+    mediaUrl: `/media/${postId}.jpg`,
+    ...overrides,
+  };
+}
+
+/** One entry of `GET /api/books/:id`; a posted quote by default. */
+export function bookEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "quote" as const,
+    quoteId: 1,
+    highlightId: null,
+    text: "Hope is a dangerous thing.",
+    author: "Robin Hobb",
+    note: null,
+    location: null,
+    posted: true,
+    highlightedAt: null,
+    postings: [bookPosting()],
+    ...overrides,
   };
 }
 
