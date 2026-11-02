@@ -114,8 +114,46 @@ describe("GET /api/quotes", () => {
     "limit=abc",
     "offset=-1",
     "minPostings=1.5",
+    "bookId=0",
+    "bookId=abc",
   ])("400 on bad param %s", async (qs) => {
     expectError(await get(`/api/quotes?${qs}`), 400);
+  });
+
+  test("?bookId= filters by the exact linked book", async () => {
+    const dune = s.book({ assetId: null, title: "Dune", author: "Frank Herbert" });
+    const messiah = s.book({ assetId: null, title: "Dune Messiah", author: "Frank Herbert" });
+    const a = s.quote({ text: "Fear is the mind-killer" });
+    const b = s.quote({ text: "Power over spice" });
+    db.run(`UPDATE quotes SET book_id = ${dune.id} WHERE id = ${a.id}`);
+    db.run(`UPDATE quotes SET book_id = ${messiah.id} WHERE id = ${b.id}`);
+
+    const r = await get(`/api/quotes?bookId=${dune.id}`);
+    expect(r.status).toBe(200);
+    expect(r.body.items.map((q: { id: number }) => q.id)).toEqual([a.id]);
+    expect(r.body.total).toBe(1);
+  });
+});
+
+describe("GET /api/authors", () => {
+  test("returns distinct authors with quote counts, by name", async () => {
+    s.quote({ text: "one", author: "Robin Hobb" });
+    s.quote({ text: "two", author: "Robin Hobb" });
+    s.quote({ text: "three", author: "Ken Liu" });
+    s.quote({ text: "anonymous", author: null });
+
+    const r = await get("/api/authors");
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({
+      items: [
+        { name: "Ken Liu", quoteCount: 1 },
+        { name: "Robin Hobb", quoteCount: 2 },
+      ],
+    });
+  });
+
+  test("an empty archive returns no authors", async () => {
+    expect((await get("/api/authors")).body).toEqual({ items: [] });
   });
 });
 

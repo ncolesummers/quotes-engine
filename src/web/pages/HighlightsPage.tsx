@@ -1,7 +1,7 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronRightIcon, SearchIcon, ShuffleIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
-import { Link, useSearchParams } from "wouter";
+import { Link } from "wouter";
 import {
   fetchHighlightBooks,
   fetchHighlights,
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useSearchParam } from "@/hooks/use-search-param-state";
 import { useUrlSearch } from "@/hooks/use-url-search";
 import { formatAttribution, formatDate, formatHighlightCopy, formatNumber } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
@@ -29,18 +30,9 @@ const plural = (n: number, word: string) => `${formatNumber(n)} ${n === 1 ? word
 
 /** `?show=all` (absent = unposted only), replaced in place so toggling adds no history. */
 function useShowFilter() {
-  const [params, setParams] = useSearchParams();
-  const show: Show = params.get("show") === "all" ? "all" : "unposted";
-  const setShow = (next: Show) =>
-    setParams(
-      (prev) => {
-        const p = new URLSearchParams(prev);
-        if (next === "all") p.set("show", "all");
-        else p.delete("show");
-        return p;
-      },
-      { replace: true },
-    );
+  const [value, setValue] = useSearchParam("show");
+  const show: Show = value === "all" ? "all" : "unposted";
+  const setShow = (next: Show) => setValue(next === "all" ? "all" : null);
   return { show, setShow };
 }
 

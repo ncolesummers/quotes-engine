@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "wouter";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useSearchParam } from "@/hooks/use-search-param-state";
 
 /**
  * A search box bound to the `?q=` URL param. The URL is the source of truth; the input keeps
@@ -8,8 +8,8 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
  * `replace`, so keystrokes don't pile up history) after it settles for `delayMs`.
  */
 export function useUrlSearch(delayMs: number) {
-  const [params, setParams] = useSearchParams();
-  const q = params.get("q") ?? "";
+  const [qParam, setQ] = useSearchParam("q");
+  const q = qParam ?? "";
 
   const [draft, setDraft] = useState(q);
   const debounced = useDebouncedValue(draft.trim(), delayMs);
@@ -23,16 +23,8 @@ export function useUrlSearch(delayMs: number) {
     lastDebounced.current = debounced;
     if (debounced === q) return;
     lastWritten.current = debounced;
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (debounced) next.set("q", debounced);
-        else next.delete("q");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [debounced, q, setParams]);
+    setQ(debounced || null);
+  }, [debounced, q, setQ]);
 
   // URL changed elsewhere (back button, a link) -> draft.
   useEffect(() => {

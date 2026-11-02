@@ -60,6 +60,8 @@ export interface SearchQuotesParams {
   author?: string;
   /** Like `author`, matched against the source title or a linked highlight's book title. */
   book?: string;
+  /** Only quotes linked to exactly this book (#14; a pick from the books list). */
+  bookId?: number;
   posted?: "yes" | "no";
   minPostings?: number;
   /** Only quotes not linked to any book (#34). */
@@ -275,6 +277,10 @@ export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSea
       SELECT 1 FROM highlights h JOIN books b ON b.id = h.book_id
       WHERE h.quote_id = q.id AND b.title LIKE $book ESCAPE '\\'))`);
     binds.book = likeContains(params.book);
+  }
+  if (params.bookId !== undefined) {
+    where.push("q.book_id = $bookId");
+    binds.bookId = params.bookId;
   }
   if (params.noBook) where.push("q.book_id IS NULL");
   if (params.posted === "yes") having.push("postingCount > 0");

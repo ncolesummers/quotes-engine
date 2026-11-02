@@ -3,6 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { BunRequest } from "bun";
 import { z } from "zod";
+import { listAuthors } from "./repos/authors";
 import { deleteBook, mergeBooks, updateBook } from "./repos/book-cleanup";
 import { getBook, getBookDetail, listBooks } from "./repos/books";
 import { getQuoteHighlights, listHighlightBooks, listHighlights } from "./repos/highlights";
@@ -121,6 +122,7 @@ const quotesQuery = z.object({
   q: text,
   author: text,
   book: text,
+  bookId: id.optional(),
   posted: z.enum(["yes", "no"]).optional(),
   minPostings: z.coerce.number().int().min(0).optional(),
   noBook: flag,
@@ -280,6 +282,10 @@ export function createRoutes(
         mergeQuotes(db, keepId, dropId);
         return Response.json(quoteDetail(db, keepId));
       }),
+    },
+
+    "/api/authors": {
+      GET: handle(() => Response.json({ items: listAuthors(db) })),
     },
 
     "/api/highlights": {

@@ -206,6 +206,14 @@ describe("searchQuotes", () => {
     expect(search({ book: "0%" }).items.map((r) => r.id)).toEqual([pct]);
   });
 
+  test("bookId filters by the exact linked book (#14)", () => {
+    const bookId = search().items.find((r) => r.id === reposted)?.bookId;
+    if (!bookId) throw new Error("expected Meditations to be linked to a book");
+    upsertQuote(db, { text: "Meditations on a theme.", sourceTitle: "Meditations II" });
+    expect(search({ bookId }).items.map((r) => r.id)).toEqual([reposted]);
+    expect(search({ bookId: 9999 }).total).toBe(0);
+  });
+
   test("search by book matches source title or a linked highlight's book", () => {
     expect(search({ book: "meditations" }).items.map((r) => r.id)).toEqual([reposted]);
 
