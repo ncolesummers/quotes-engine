@@ -1,0 +1,17 @@
+{
+  "data": [
+    {
+      "id": "18000000000000003",
+      "media_type": "VIDEO",
+      "media_url": "https://scontent.cdninstagram.com/v/t51/3.mp4",
+      "thumbnail_url": "https://scontent.cdninstagram.com/v/t51/3-thumb.jpg",
+      "permalink": "https://www.instagram.com/reel/CCC333/",
+      "timestamp": "2026-10-01T00:00:00+0000",
+      "like_count": 5,
+      "comments_count": 1
+    }
+  ],
+  "paging": {
+    "cursors": { "before": "QVFIUmBEFORE2", "after": "QVFIUmAFTER2" }
+  }
+}
