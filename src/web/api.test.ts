@@ -4,6 +4,7 @@ import {
   ApiError,
   apiGet,
   apiSend,
+  fetchAuthors,
   fetchQuoteDetail,
   fetchQuotes,
   fetchStats,
@@ -80,6 +81,19 @@ describe("endpoint helpers", () => {
     expect(url?.searchParams.get("sort")).toBe("postings");
     expect(url?.searchParams.get("limit")).toBe("20");
     expect(url?.searchParams.get("offset")).toBe("40");
+  });
+
+  test("fetchQuotes sends bookId as a number", async () => {
+    fetchMock = mockFetch(() => json({ items: [], total: 0 }));
+    await fetchQuotes({ bookId: 3, minPostings: 2 });
+    expect(fetchMock.calls[0]?.searchParams.get("bookId")).toBe("3");
+    expect(fetchMock.calls[0]?.searchParams.get("minPostings")).toBe("2");
+  });
+
+  test("fetchAuthors hits /api/authors and returns the items", async () => {
+    fetchMock = mockFetch(() => json({ items: [{ name: "Seneca", quoteCount: 2 }] }));
+    expect(await fetchAuthors()).toEqual([{ name: "Seneca", quoteCount: 2 }]);
+    expect(fetchMock.calls[0]?.pathname).toBe("/api/authors");
   });
 
   test("fetchStats hits /api/stats", async () => {
