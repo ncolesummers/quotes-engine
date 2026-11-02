@@ -22,7 +22,12 @@
     "sync:instagram": "bun scripts/sync-instagram.ts",
     "books:backfill": "bun scripts/books-backfill.ts",
     "books:rekey": "bun scripts/books-rekey.ts",
-    "import:books": "bun scripts/import-books.ts"
+    "import:books": "bun scripts/import-books.ts",
+    "sync": "bun scripts/sync.ts",
+    "launchd:install": "bun scripts/launchd.ts install",
+    "launchd:uninstall": "bun scripts/launchd.ts uninstall",
+    "launchd:status": "bun scripts/launchd.ts status",
+    "launchd:render": "bun scripts/launchd.ts render"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.105.1",

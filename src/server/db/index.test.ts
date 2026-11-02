@@ -89,6 +89,73 @@ describe("openDb", () => {
     }
   });
 
+  test("sets busy_timeout to 5000ms", () => {
+    const db = openDb(":memory:");
+    try {
+      expect(db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout).toBe(5000);
+    } finally {
+      db.close();
+    }
+  });
+
+  /** Starts a writer process holding a lock on `path`; resolves once it has the lock. */
+  async function startWriter(path: string, mode: "immediate" | "exclusive", holdMs: number) {
+    const helper = join(import.meta.dir, "../../../test/helpers/sqlite-writer.ts");
+    const proc = Bun.spawn([process.execPath, helper, path, mode, String(holdMs)], {
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    let out = "";
+    while (!out.includes("locked")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`writer exited early: ${out}`);
+      out += new TextDecoder().decode(value);
+    }
+    reader.releaseLock();
+    return proc;
+  }
+
+  test("two connections plus a concurrent writer do not throw SQLITE_BUSY", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "qe-db-"));
+    const path = join(tmp, "busy.db");
+    const a = openDb(path);
+    const b = openDb(path);
+    const writer = await startWriter(path, "immediate", 400);
+    try {
+      // Both writes have to wait for the other process's lock to be released.
+      expect(() =>
+        a.run("INSERT INTO books (title, normalized_key, source) VALUES ('A', 'a', 'manual')"),
+      ).not.toThrow();
+      expect(() =>
+        b.run("INSERT INTO books (title, normalized_key, source) VALUES ('B', 'b', 'manual')"),
+      ).not.toThrow();
+      expect(a.query("SELECT COUNT(*) AS n FROM books").get()).toEqual({ n: 2 });
+    } finally {
+      expect(await writer.exited).toBe(0);
+      a.close();
+      b.close();
+    }
+  });
+
+  test("busy_timeout is set before the WAL pragma, so opening a locked DB waits", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "qe-db-"));
+    const path = join(tmp, "locked.db");
+    const writer = await startWriter(path, "exclusive", 400);
+    let db: Database | undefined;
+    try {
+      expect(() => {
+        db = openDb(path);
+      }).not.toThrow();
+      expect(
+        db?.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode,
+      ).toBe("wal");
+    } finally {
+      db?.close();
+      await writer.exited;
+    }
+  });
+
   test("uses QUOTES_DB_PATH when no path is given", () => {
     tmp = mkdtempSync(join(tmpdir(), "qe-db-"));
     const path = join(tmp, "env.db");
