@@ -70,6 +70,18 @@ describe("normalizeQuote", () => {
     ["hashtag right after punctuation", "Know thyself.#wisdom", "know thyself"],
     ["hashtag right after emoji", "Know thyself \u{1F525}#wisdom", "know thyself"],
     ["adjacent hashtags", "Know thyself #wisdom#quotes", "know thyself"],
+    ["numeric tag glued before a word tag", "Know thyself #2026#wisdom", "know thyself 2026"],
+    ["numeric tag between word tags", "Know thyself #wisdom#1#quotes", "know thyself 1"],
+    [
+      "spaced numeric and word tags match glued form",
+      "Know thyself #2026 #wisdom",
+      "know thyself 2026",
+    ],
+    [
+      "quoted body with internal dash keeps its body",
+      '"Choose \u2014 Love, not hate." \u2014 Seneca',
+      "choose love not hate",
+    ],
     [
       "non-Latin hashtag with combining marks",
       "Know thyself #\u092A\u094D\u0930\u0947\u0930\u0923\u093E",
@@ -254,6 +266,31 @@ describe("parseAttribution", () => {
         author: "Julius Caesar",
         source: "Commentaries \u2013 Book I",
       },
+    ],
+    [
+      "separator inside a straight-quoted body is skipped",
+      '"Choose \u2014 Love, not hate." \u2014 Seneca',
+      { text: "Choose \u2014 Love, not hate.", author: "Seneca" },
+    ],
+    [
+      "separator inside a curly-quoted body is skipped",
+      "\u201cChoose \u2014 Love, not hate.\u201d \u2014 Seneca, Letters \u2013 Book II",
+      { text: "Choose \u2014 Love, not hate.", author: "Seneca", source: "Letters \u2013 Book II" },
+    ],
+    [
+      "separator inside a guillemet-quoted body is skipped",
+      "\u00abChoose \u2014 Love, not hate.\u00bb \u2014 Seneca",
+      { text: "Choose \u2014 Love, not hate.", author: "Seneca" },
+    ],
+    [
+      "quoted body with internal separator and no attribution",
+      "\u201cChoose \u2014 Love, not hate.\u201d",
+      { text: "Choose \u2014 Love, not hate." },
+    ],
+    [
+      "unclosed opening quote does not hide separators",
+      "\u201cKnow thyself \u2014 Socrates",
+      { text: "\u201cKnow thyself", author: "Socrates" },
     ],
   ];
 

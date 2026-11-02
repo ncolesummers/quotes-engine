@@ -40,10 +40,35 @@ const SEPARATOR_RE =
 
 /**
  * Runs of Instagram-style hashtags not glued to a preceding word character (so "C#" is kept).
- * Each tag must contain a letter, so "#1" is kept as text. Combining marks count as word
- * characters so tags in scripts like Devanagari are removed whole.
+ * Combining marks count as word characters so tags in scripts like Devanagari match whole.
  */
-const HASHTAG_RE = /(?<![\p{L}\p{M}\p{N}_])(?:#[\p{N}_]*\p{L}[\p{L}\p{M}\p{N}_]*)+/gu;
+const HASHTAG_RUN_RE = /(?<![\p{L}\p{M}\p{N}_])(?:#[\p{L}\p{M}\p{N}_]+)+/gu;
+const HASHTAG_RE = /#[\p{L}\p{M}\p{N}_]+/gu;
+
+/**
+ * Strip one hashtag run. Tags containing a letter are dropped. Numeric-only tags ("#1",
+ * "#2026") are kept as text, so "#2026#wisdom" and "#2026 #wisdom" both leave "2026".
+ */
+function stripHashtagRun(run: string): string {
+  return run.replace(HASHTAG_RE, (tag) => (/\p{L}/u.test(tag) ? " " : ` ${tag} `));
+}
+
+/** Opening quote marks whose closing partner hides separators in a quoted body. */
+const QUOTE_PAIRS: Record<string, string> = {
+  '"': '"',
+  "\u201C": "\u201D",
+  "\u201E": "\u201C",
+  "\u00AB": "\u00BB",
+};
+
+/**
+ * Index of the closing mark of a quoted body that opens the string, or -1. Single quotes are
+ * excluded because they double as apostrophes.
+ */
+function quotedBodyEnd(s: string): number {
+  const close = QUOTE_PAIRS[s.charAt(0)];
+  return close ? s.lastIndexOf(close) : -1;
+}
 
 /** Keycap sequences ("1" + U+FE0F + U+20E3), emoji, and the joiners/selectors that glue emoji. */
 const EMOJI_RE =
@@ -82,9 +107,10 @@ function looksLikeAuthor(author: string): boolean {
 /**
  * Split a trailing attribution ("-- Author", "~ Author", "- Author, Source") off a quote.
  *
- * Separators are tried left to right and the first one that yields a valid attribution
- * wins, so separators inside a comma-delimited source ("Seneca, Letters - Book II") stay in
- * the source. A separator is valid when:
+ * Separators inside a quoted body that opens the string ("Choose - Love, not hate.") are
+ * ignored. The rest are tried left to right and the first one that yields a valid
+ * attribution wins, so separators inside a comma-delimited source ("Seneca, Letters -
+ * Book II") stay in the source. A separator is valid when:
  * - the author (text after it, up to the first comma) looks like a name and contains no
  *   other separator, and
  * - it follows a closing quote / sentence end, or is preceded by whitespace in mixed-case
@@ -94,7 +120,8 @@ function looksLikeAuthor(author: string): boolean {
  */
 export function parseAttribution(s: string): Attribution {
   const trimmed = s.trim();
-  const separators = [...trimmed.matchAll(SEPARATOR_RE)];
+  const bodyEnd = quotedBodyEnd(trimmed);
+  const separators = [...trimmed.matchAll(SEPARATOR_RE)].filter((m) => m.index > bodyEnd);
   const caseInformative = /\p{Ll}/u.test(trimmed);
 
   for (const sep of separators) {
@@ -132,7 +159,7 @@ export function normalizeQuote(s: string): string {
       .replace(/\u00B4/g, "'")
       .replace(EMOJI_RE, " ")
       .normalize("NFKC")
-      .replace(HASHTAG_RE, " "),
+      .replace(HASHTAG_RUN_RE, stripHashtagRun),
   );
   let text = parseAttribution(cleaned).text;
   for (const [re, replacement] of ASCII_FOLDS) text = text.replace(re, replacement);
