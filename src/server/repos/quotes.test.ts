@@ -199,6 +199,24 @@ describe("searchQuotes", () => {
     expect(search({ author: "seneca" }).items.map((r) => r.id)).toEqual([single]);
   });
 
+  test("authorExact matches the whole name only (a pick from GET /api/authors)", () => {
+    const longer = upsertQuote(db, { text: "Two voices.", author: "Seneca the Younger" }).quote.id;
+    expect(
+      search({ author: "Seneca" })
+        .items.map((r) => r.id)
+        .sort(),
+    ).toEqual([single, longer].sort());
+    expect(search({ authorExact: "Seneca" }).items.map((r) => r.id)).toEqual([single]);
+    expect(search({ authorExact: "seneca" }).total).toBe(0);
+    expect(search({ authorExact: "%" }).total).toBe(0);
+    const padded = upsertQuote(db, { text: "Padded.", author: " Epictetus " }).quote.id;
+    expect(
+      search({ authorExact: "Epictetus" })
+        .items.map((r) => r.id)
+        .sort(),
+    ).toEqual([unposted, padded].sort());
+  });
+
   test("author and book filters treat % and _ literally", () => {
     expect(search({ author: "_" }).items).toEqual([]);
     expect(search({ book: "%" }).items).toEqual([]);

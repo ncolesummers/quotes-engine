@@ -37,23 +37,32 @@ export function parseQuoteFilters(params: URLSearchParams): QuoteFilters {
   const posted = params.get("posted");
   const book = params.get("book") ?? "";
   const author = params.get("author")?.trim();
+  const bookId = /^[1-9]\d*$/.test(book) ? Number(book) : null;
+  const reposted = params.get("reposted") === "1";
+  // A hand-edited URL can hold both halves of a pair `filterPatch` keeps apart; the more
+  // specific one wins, so the page never asks for an always-empty result.
   return {
     sort: SORTS.some((s) => s.value === sort) ? (sort as QuoteSort) : DEFAULT_SORT,
     author: author ? author : null,
-    bookId: /^[1-9]\d*$/.test(book) ? Number(book) : null,
-    posted: posted === "yes" || posted === "no" ? posted : "any",
-    reposted: params.get("reposted") === "1",
-    noBook: params.get("nobook") === "1",
+    bookId,
+    posted: posted === "yes" || (posted === "no" && !reposted) ? posted : "any",
+    reposted,
+    noBook: params.get("nobook") === "1" && bookId === null,
   };
 }
 
 /** The `/api/quotes` params for `filters` (q, limit and offset are added by the caller). */
 export function toQuoteSearchParams(
   f: QuoteFilters,
-): Pick<QuoteSearchParams, "sort" | "author" | "bookId" | "posted" | "minPostings" | "noBook"> {
+): Pick<
+  QuoteSearchParams,
+  "sort" | "authorExact" | "bookId" | "posted" | "minPostings" | "noBook"
+> {
   return {
     sort: f.sort,
-    ...(f.author !== null && { author: f.author }),
+    // The author comes from the picker (GET /api/authors), so match it whole: a substring
+    // match would make "Ken Liu" also pick up "Ken Liu and Others".
+    ...(f.author !== null && { authorExact: f.author }),
     ...(f.bookId !== null && { bookId: f.bookId }),
     ...(f.posted !== "any" && { posted: f.posted }),
     ...(f.reposted && { minPostings: REPOSTED_MIN_POSTINGS }),
@@ -96,9 +105,3 @@ export const CLEAR_FILTERS: ParamPatch = {
   reposted: null,
   nobook: null,
 };
-
-export function activeFilterCount(f: QuoteFilters): number {
-  return [f.author !== null, f.bookId !== null, f.posted !== "any", f.reposted, f.noBook].filter(
-    Boolean,
-  ).length;
-}

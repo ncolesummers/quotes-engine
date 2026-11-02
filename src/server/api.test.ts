@@ -93,8 +93,12 @@ describe("GET /api/quotes", () => {
     const byAuthor = await get("/api/quotes?author=marcus");
     expect(byAuthor.body.items.map((q: { id: number }) => q.id)).toEqual([b.id]);
 
+    s.quote({ text: "Meditations on a theme", author: "Marcus Aurelius Antoninus" });
+    const exact = await get("/api/quotes?authorExact=Marcus%20Aurelius");
+    expect(exact.body.items.map((q: { id: number }) => q.id)).toEqual([b.id]);
+
     const page = await get("/api/quotes?limit=1&offset=1&sort=likes");
-    expect(page.body.total).toBe(3);
+    expect(page.body.total).toBe(4);
     expect(page.body.items.map((q: { id: number }) => q.id)).toEqual([a.id]);
   });
 

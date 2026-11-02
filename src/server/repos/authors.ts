@@ -10,11 +10,11 @@ export interface AuthorSummary {
 export function listAuthors(db: Database): AuthorSummary[] {
   return db
     .query<AuthorSummary, []>(
-      `SELECT author AS name, COUNT(*) AS quoteCount
+      `SELECT trim(author) AS name, COUNT(*) AS quoteCount
        FROM quotes
        WHERE author IS NOT NULL AND trim(author) <> ''
-       GROUP BY author
-       ORDER BY author COLLATE NOCASE, author`,
+       GROUP BY trim(author)
+       ORDER BY name COLLATE NOCASE, name`,
     )
     .all();
 }

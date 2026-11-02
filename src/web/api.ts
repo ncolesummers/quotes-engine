@@ -152,7 +152,10 @@ export type QuoteSort = "likes" | "comments" | "recent" | "postings";
 
 export interface QuoteSearchParams {
   q?: string;
+  /** Substring of the author. */
   author?: string;
+  /** The whole author name (a pick from `GET /api/authors`). */
+  authorExact?: string;
   book?: string;
   /** Exact linked book (a pick from the books list). */
   bookId?: number;

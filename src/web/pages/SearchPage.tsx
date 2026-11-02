@@ -25,7 +25,6 @@ import { useUrlSearch } from "@/hooks/use-url-search";
 import { formatNumber } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
 import {
-  activeFilterCount,
   CLEAR_FILTERS,
   filterPatch,
   parseQuoteFilters,
@@ -164,11 +163,7 @@ export function SearchPage() {
         </div>
 
         <div className="flex items-start justify-between gap-3 text-sm">
-          <MobileFilters
-            filters={filters}
-            activeCount={activeFilterCount(filters)}
-            onChange={setFilters}
-          />
+          <MobileFilters filters={filters} activeCount={chips.length} onChange={setFilters} />
           <FilterControls filters={filters} onChange={setFilters} className="hidden sm:flex" />
           <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
             <label htmlFor={sortId}>Sort</label>
@@ -200,9 +195,9 @@ export function SearchPage() {
         <p aria-live="polite" className="text-sm text-muted-foreground">
           {query.isSuccess &&
             (q
-              ? `${formatNumber(total)} ${total === 1 ? "match" : "matches"} for “${q}”`
+              ? `${formatNumber(total)} ${total === 1 ? "match" : "matches"} for “${q}”${filtered ? " with these filters" : ""}`
               : filtered
-                ? `${formatNumber(total)} ${noun} match these filters`
+                ? `${formatNumber(total)} ${noun} ${total === 1 ? "matches" : "match"} these filters`
                 : `${formatNumber(total)} ${noun} in the archive`)}
         </p>
       </section>
@@ -233,7 +228,9 @@ export function SearchPage() {
         <div className="rounded-xl border border-dashed px-6 py-14 text-center">
           <p className="font-serif text-xl italic">
             {filtered
-              ? "No quotes match these filters."
+              ? q
+                ? `No quotes match “${q}” with these filters.`
+                : "No quotes match these filters."
               : q
                 ? `No quotes match “${q}”.`
                 : "The archive is empty."}

@@ -68,7 +68,8 @@ describe("SearchPage filters", () => {
 
     await waitFor(() => expect(fetchMock?.callsTo("/api/quotes").length).toBeGreaterThan(0));
     const req = lastQuoteRequest();
-    expect(req.get("author")).toBe("Ken Liu");
+    expect(req.get("authorExact")).toBe("Ken Liu");
+    expect(req.has("author")).toBe(false);
     expect(req.get("bookId")).toBe("3");
     expect(req.get("posted")).toBe("yes");
     expect(req.get("minPostings")).toBe("2");
@@ -98,7 +99,7 @@ describe("SearchPage filters", () => {
     expect(screen.queryByRole("list", { name: /active filters/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /clear filters/i })).toBeNull();
     const req = lastQuoteRequest();
-    for (const key of ["author", "bookId", "posted", "minPostings", "noBook"]) {
+    for (const key of ["author", "authorExact", "bookId", "posted", "minPostings", "noBook"]) {
       expect(req.has(key)).toBe(false);
     }
   });
@@ -110,7 +111,7 @@ describe("SearchPage filters", () => {
 
     await pick(/author/i, "hobb", /Robin Hobb/);
     await waitFor(() => expect(lastUrl(location).searchParams.get("author")).toBe("Robin Hobb"));
-    await waitFor(() => expect(lastQuoteRequest().get("author")).toBe("Robin Hobb"));
+    await waitFor(() => expect(lastQuoteRequest().get("authorExact")).toBe("Robin Hobb"));
     expect(fetchMock?.callsTo("/api/authors").length).toBeGreaterThan(0);
   });
 
@@ -212,7 +213,7 @@ describe("SearchPage filters", () => {
 
     fireEvent.click(within(activeFilters()).getByRole("button", { name: /remove.*ken liu/i }));
     await waitFor(() => expect(lastUrl(location).search).toBe("?q=hope&posted=yes"));
-    await waitFor(() => expect(lastQuoteRequest().has("author")).toBe(false));
+    await waitFor(() => expect(lastQuoteRequest().has("authorExact")).toBe(false));
     expect(lastQuoteRequest().get("posted")).toBe("yes");
   });
 
@@ -227,7 +228,7 @@ describe("SearchPage filters", () => {
     await waitFor(() => expect(lastUrl(location).search).toBe("?q=hope&sort=likes"));
     await waitFor(() => {
       const req = lastQuoteRequest();
-      for (const key of ["author", "bookId", "posted", "minPostings", "noBook"]) {
+      for (const key of ["author", "authorExact", "bookId", "posted", "minPostings", "noBook"]) {
         expect(req.has(key)).toBe(false);
       }
     });
@@ -247,6 +248,29 @@ describe("SearchPage filters", () => {
     const buttons = screen.getAllByRole("button", { name: /clear filters/i });
     fireEvent.click(buttons.at(-1) as HTMLElement);
     await waitFor(() => expect(lastUrl(location).search).toBe(""));
+  });
+
+  test("the status line names the search text and the filters together", async () => {
+    fetchMock = mockFetch((url) =>
+      url.pathname === "/api/quotes"
+        ? json({ items: [quoteItem()], total: 1 })
+        : json({ items: url.pathname === "/api/authors" ? AUTHORS : BOOKS }),
+    );
+    renderWithProviders(<SearchPage />, { path: "/?q=hope&posted=yes" });
+    expect(await screen.findByText("1 match for “hope” with these filters")).toBeDefined();
+    cleanup();
+    renderWithProviders(<SearchPage />, { path: "/?posted=yes" });
+    expect(await screen.findByText("1 quote matches these filters")).toBeDefined();
+  });
+
+  test("no results for search text plus filters names both", async () => {
+    fetchMock = mockFetch((url) =>
+      url.pathname === "/api/quotes"
+        ? json({ items: [], total: 0 })
+        : json({ items: url.pathname === "/api/authors" ? AUTHORS : BOOKS }),
+    );
+    renderWithProviders(<SearchPage />, { path: "/?q=hope&posted=no" });
+    expect(await screen.findByText("No quotes match “hope” with these filters.")).toBeDefined();
   });
 
   test("on small screens a Filters button opens the filters in a popover", async () => {

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  activeFilterCount,
   CLEAR_FILTERS,
   filterPatch,
   parseQuoteFilters,
@@ -22,14 +21,15 @@ describe("parseQuoteFilters", () => {
   });
 
   test("reads every param", () => {
-    expect(parse("sort=likes&author=Ken+Liu&book=3&posted=no&reposted=1&nobook=1")).toEqual({
+    expect(parse("sort=likes&author=Ken+Liu&book=3&posted=yes&reposted=1")).toEqual({
       sort: "likes",
       author: "Ken Liu",
       bookId: 3,
-      posted: "no",
+      posted: "yes",
       reposted: true,
-      noBook: true,
+      noBook: false,
     });
+    expect(parse("posted=no&nobook=1")).toMatchObject({ posted: "no", noBook: true });
   });
 
   test.each([
@@ -42,6 +42,12 @@ describe("parseQuoteFilters", () => {
     ["author=%20%20", { author: null }],
   ])("ignores bad value %s", (qs, expected) => {
     expect(parse(qs)).toMatchObject(expected);
+  });
+
+  test("a hand-edited URL with contradictory pairs keeps the stronger filter", () => {
+    expect(parse("book=3&nobook=1")).toMatchObject({ bookId: 3, noBook: false });
+    expect(parse("reposted=1&posted=no")).toMatchObject({ reposted: true, posted: "any" });
+    expect(parse("reposted=1&posted=yes")).toMatchObject({ reposted: true, posted: "yes" });
   });
 });
 
@@ -58,7 +64,7 @@ describe("toQuoteSearchParams", () => {
       }),
     ).toEqual({
       sort: "comments",
-      author: "Seneca",
+      authorExact: "Seneca",
       bookId: 4,
       posted: "yes",
       minPostings: 2,
@@ -105,9 +111,4 @@ test("CLEAR_FILTERS removes every filter param but not q or sort", () => {
     "posted",
     "reposted",
   ]);
-});
-
-test("activeFilterCount", () => {
-  expect(activeFilterCount(parse("sort=likes"))).toBe(0);
-  expect(activeFilterCount(parse("author=X&book=2&posted=yes&reposted=1&nobook=1"))).toBe(5);
 });

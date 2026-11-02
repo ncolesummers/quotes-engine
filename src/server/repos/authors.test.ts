@@ -32,6 +32,12 @@ describe("listAuthors", () => {
     expect(listAuthors(db)).toEqual([{ name: "Seneca", quoteCount: 1 }]);
   });
 
+  test("names are trimmed, so padded duplicates count as one (they match authorExact)", () => {
+    s.quote({ text: "a", author: "Seneca" });
+    s.quote({ text: "b", author: "Seneca " });
+    expect(listAuthors(db)).toEqual([{ name: "Seneca", quoteCount: 2 }]);
+  });
+
   test("empty archive -> []", () => {
     expect(listAuthors(db)).toEqual([]);
   });

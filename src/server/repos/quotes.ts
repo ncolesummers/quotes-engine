@@ -58,6 +58,8 @@ export interface SearchQuotesParams {
   q?: string;
   /** Literal substring of the author; case-insensitive for ASCII (SQLite LIKE). */
   author?: string;
+  /** The whole author name, exactly (a pick from `GET /api/authors`; #14). */
+  authorExact?: string;
   /** Like `author`, matched against the source title or a linked highlight's book title. */
   book?: string;
   /** Only quotes linked to exactly this book (#14; a pick from the books list). */
@@ -270,6 +272,10 @@ export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSea
   if (params.author) {
     where.push("q.author LIKE $author ESCAPE '\\'");
     binds.author = likeContains(params.author);
+  }
+  if (params.authorExact) {
+    where.push("trim(q.author) = $authorExact");
+    binds.authorExact = params.authorExact;
   }
   if (params.book) {
     where.push(`(q.source_title LIKE $book ESCAPE '\\' OR bk.title LIKE $book ESCAPE '\\'

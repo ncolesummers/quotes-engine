@@ -121,6 +121,7 @@ const flag = z
 const quotesQuery = z.object({
   q: text,
   author: text,
+  authorExact: text,
   book: text,
   bookId: id.optional(),
   posted: z.enum(["yes", "no"]).optional(),
