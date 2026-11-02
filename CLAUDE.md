@@ -13,6 +13,8 @@ Local-only app cataloging Instagram quote posts + Apple Books highlights. See RE
 - `bun run typecheck` — `tsc --noEmit`
 - DB: `bun:sqlite` only (no ORM). SQL migrations in `src/server/db/migrations/NNNN_name.sql`.
 - UI: React + Tailwind v4 + shadcn/ui components in `src/web/components/ui`.
+- **shadcn gotcha:** `shadcn add` now generates `import { cn } from "cn"` and installs a new `cn` npm package. After every `shadcn add`, rewrite that import to `@/lib/utils` and run `bun remove cn`.
+- Path alias: `@/*` maps to `src/web/*` only. Server code (`src/server`, `src/ingest`, `scripts`) uses relative imports.
 
 ## TDD (required)
 
