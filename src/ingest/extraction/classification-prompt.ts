@@ -94,7 +94,7 @@ function renderPrompt(batchPath: string, outPath: string, batch: string): string
 
 ## Never write out quote text
 
-**Never write quote text** — not in the result file, not in your reply, not paraphrased, not partly. Refer to a quote only by its line numbers (\`"image"\` + \`"lines"\`) or with \`"from_caption": true\`. The quote text is filled in later by code, from the OCR. Your output holds only line references, names, titles, flags and numbers. Do not open the images either: everything you need is in the batch file.
+**Never write quote text** — not in the result file, not in your reply, not paraphrased, not partly. Refer to a quote only by its line numbers: image lines (\`"image"\` + \`"lines"\`) or caption segments (\`"from_caption": true\` + \`"caption_lines"\`). The quote text is filled in later by code, from the OCR. Your output holds only line references, names, titles, flags and numbers. Do not open the images either: everything you need is in the batch file.
 
 ## Input
 
