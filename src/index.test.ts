@@ -13,6 +13,10 @@ describe("server", () => {
     await server.stop(true);
   });
 
+  test("binds to localhost only by default", () => {
+    expect(server.hostname).toBe("127.0.0.1");
+  });
+
   test("GET /api/health returns { ok: true }", async () => {
     const res = await fetch(new URL("/api/health", server.url));
     expect(res.status).toBe(200);
