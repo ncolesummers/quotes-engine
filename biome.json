@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!data", "!dist", "!coverage", "!bun.lock", "!src/web/components/ui"]
+    "includes": [
+      "**",
+      "!data",
+      "!dist",
+      "!coverage",
+      "!bun.lock",
+      "!src/web/components/ui",
+      "!docs/extraction-prompt.md"
+    ]
   },
   "formatter": {
     "enabled": true,

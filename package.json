@@ -11,6 +11,8 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "import:extractions": "bun scripts/import-extractions.ts",
+    "extract:batches": "bun scripts/extraction-batches.ts",
+    "docs:prompt": "bun scripts/extraction-prompt.ts --doc",
     "sync:instagram": "bun scripts/sync-instagram.ts"
   },
   "dependencies": {
