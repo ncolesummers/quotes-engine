@@ -13,7 +13,7 @@ export type Downloader = (url: string, path: string) => Promise<void>;
 export interface SyncOptions {
   db: Database;
   client: Pick<InstagramClient, "listMedia">;
-  /** Directory media files are saved to; `media_path` is stored relative to it. */
+  /** Directory media files are saved to. `media_path` stores only the file name relative to it (served as `/media/<media_path>`). */
   mediaDir: string;
   /** Clock; one snapshot timestamp is taken per run (default `new Date()`). */
   now?: () => Date;

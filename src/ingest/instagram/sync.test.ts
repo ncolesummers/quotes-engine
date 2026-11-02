@@ -296,6 +296,29 @@ describe("syncInstagram", () => {
     ]);
     expect(summary).toMatchObject({ snapshots: 2, downloads: 1 });
   });
+
+  test("media_path is relative to the media dir, even when mediaDir is absolute or nested", async () => {
+    const nested = join(mediaDir, "data", "media");
+    const dl = fakeDownloader();
+    await syncInstagram({
+      db,
+      client: fakeClient([
+        media("18418335307082336"),
+        media("car", {
+          mediaType: "CAROUSEL_ALBUM",
+          children: [{ id: "c1", mediaType: "IMAGE", mediaUrl: "https://cdn.example/c1.jpg" }],
+        }),
+      ]),
+      mediaDir: nested,
+      now: () => T1,
+      download: dl.download,
+    });
+    // The API serves files as /media/<media_path>.
+    expect(getPostByIgMediaId(db, "18418335307082336")?.mediaPath).toBe("18418335307082336.jpg");
+    expect(getPostByIgMediaId(db, "car")?.mediaPath).toBe("car_1.jpg");
+    expect(existsSync(join(nested, "18418335307082336.jpg"))).toBe(true);
+    expect(dl.calls.every((c) => c.path.startsWith(nested))).toBe(true);
+  });
 });
 
 describe("mediaTargets", () => {
