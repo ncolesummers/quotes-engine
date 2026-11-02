@@ -1,0 +1,42 @@
+{
+  "data": [
+    {
+      "id": "18000000000000001",
+      "caption": "“The impediment to action advances action.” — Marcus Aurelius",
+      "media_type": "IMAGE",
+      "media_url": "https://scontent.cdninstagram.com/v/t51/1.jpg",
+      "permalink": "https://www.instagram.com/p/AAA111/",
+      "timestamp": "2026-11-01T21:27:16+0000",
+      "like_count": 42,
+      "comments_count": 3
+    },
+    {
+      "id": "18000000000000002",
+      "caption": "Carousel of quotes",
+      "media_type": "CAROUSEL_ALBUM",
+      "media_url": "https://scontent.cdninstagram.com/v/t51/2.jpg",
+      "permalink": "https://www.instagram.com/p/BBB222/",
+      "timestamp": "2026-10-30T08:05:00+0000",
+      "like_count": 17,
+      "comments_count": 0,
+      "children": {
+        "data": [
+          {
+            "media_url": "https://scontent.cdninstagram.com/v/t51/2a.jpg",
+            "media_type": "IMAGE",
+            "id": "18000000000000021"
+          },
+          {
+            "media_url": "https://scontent.cdninstagram.com/v/t51/2b.mp4",
+            "media_type": "VIDEO",
+            "id": "18000000000000022"
+          }
+        ]
+      }
+    }
+  ],
+  "paging": {
+    "cursors": { "before": "QVFIUmBEFORE", "after": "QVFIUmAFTER" },
+    "next": "https://graph.facebook.com/v24.0/17841407547014534/media?access_token=test-token&fields=id&limit=50&after=QVFIUmAFTER"
+  }
+}
