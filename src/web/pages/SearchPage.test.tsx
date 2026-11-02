@@ -121,6 +121,26 @@ describe("SearchPage", () => {
     expect(c.getByText(/Mar 5, 2026/)).toBeDefined();
   });
 
+  test("a card links the book name to its book page when the quote has a book", async () => {
+    fetchMock = mockFetch(() =>
+      json({
+        items: [
+          quoteItem({
+            id: 7,
+            text: "Twice told.",
+            sourceTitle: "The Dispossessed",
+            bookId: 3,
+            book: { id: 3, title: "The Dispossessed", author: "Ursula K. Le Guin" },
+          }),
+        ],
+        total: 1,
+      }),
+    );
+    renderWithProviders(<SearchPage />);
+    const link = await screen.findByRole("link", { name: "The Dispossessed" });
+    expect(link.getAttribute("href")).toBe("/books/3");
+  });
+
   test("the empty state shows when there are no results", async () => {
     fetchMock = mockFetch(() => json({ items: [], total: 0 }));
     renderWithProviders(<SearchPage />, { path: "/?q=zzz" });

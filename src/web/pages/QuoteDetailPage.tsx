@@ -109,19 +109,23 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
     );
   }
 
-  const { quote, highlights } = query.data;
+  const { quote, highlights, book } = query.data;
   const detailKey = queryKeys.quotes.detail(id);
 
   const refreshLists = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.quotes.searches });
     queryClient.invalidateQueries({ queryKey: queryKeys.stats });
+    queryClient.invalidateQueries({ queryKey: queryKeys.books.all });
   };
 
   const save = (field: keyof QuotePatch) => async (value: string | null) => {
     const updated = await updateQuote(id, { [field]: value });
+    const bookChanged = (updated.bookId ?? null) !== (query.data.book?.id ?? null);
     queryClient.setQueryData<QuoteDetail>(detailKey, (prev) =>
-      prev ? { ...prev, quote: updated } : prev,
+      prev ? { ...prev, quote: updated, book: bookChanged ? null : prev.book } : prev,
     );
+    // A new source title can link a different book; refetch to pick it up.
+    if (bookChanged) queryClient.invalidateQueries({ queryKey: detailKey });
     refreshLists();
   };
 
@@ -214,7 +218,7 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
             >
               {(title) => (
                 <Link
-                  href={bookHref(title)}
+                  href={bookHref(title, book?.id)}
                   className="font-serif italic underline-offset-4 hover:text-primary hover:underline"
                 >
                   {title}

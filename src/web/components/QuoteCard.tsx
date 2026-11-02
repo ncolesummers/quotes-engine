@@ -35,7 +35,7 @@ export function QuoteCard({ quote }: { quote: QuoteSearchItem }) {
           {quote.author && quote.sourceTitle && ", "}
           {quote.sourceTitle && (
             <Link
-              href={bookHref(quote.sourceTitle)}
+              href={bookHref(quote.sourceTitle, quote.book?.id)}
               className="font-serif italic underline-offset-4 hover:text-primary hover:underline"
             >
               {quote.sourceTitle}

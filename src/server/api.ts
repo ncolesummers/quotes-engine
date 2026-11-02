@@ -3,6 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { BunRequest } from "bun";
 import { z } from "zod";
+import { getBookDetail, listBooks } from "./repos/books";
 import { getQuoteHighlights, listHighlights } from "./repos/highlights";
 import { getQuote, getQuoteDetail, mergeQuotes, searchQuotes, updateQuote } from "./repos/quotes";
 import { findDuplicatePairs, listReviewLinks, resolveLink } from "./repos/review";
@@ -145,6 +146,11 @@ const highlightsQuery = z.object({
   offset,
 });
 
+const booksQuery = z.object({
+  q: text,
+  sort: z.enum(["title", "quotes", "posted", "recent"]).default("title"),
+});
+
 const reviewBody = z.object({ action: z.enum(["confirm", "reject"]) });
 
 /** URL for a media file stored relative to the media dir, or null. */
@@ -158,6 +164,7 @@ function quoteDetail(db: Database, quoteId: number) {
   if (!detail) throw new HttpError(404, `Quote ${quoteId} not found`);
   return {
     quote: detail.quote,
+    book: detail.book,
     postings: detail.postings.map((p) => ({ ...p, mediaUrl: mediaUrl(p.mediaPath) })),
     highlights: getQuoteHighlights(db, quoteId),
   };
@@ -240,6 +247,25 @@ export function createRoutes(
 
     "/api/highlights": {
       GET: handle((req) => Response.json(listHighlights(db, parseQuery(highlightsQuery, req)))),
+    },
+
+    "/api/books": {
+      GET: handle((req) => Response.json({ items: listBooks(db, parseQuery(booksQuery, req)) })),
+    },
+
+    "/api/books/:id": {
+      GET: handle((req: BunRequest<"/api/books/:id">) => {
+        const bookId = parse(id, req.params.id);
+        const detail = getBookDetail(db, bookId);
+        if (!detail) throw new HttpError(404, `Book ${bookId} not found`);
+        return Response.json({
+          book: detail.book,
+          entries: detail.entries.map((e) => ({
+            ...e,
+            postings: e.postings.map((p) => ({ ...p, mediaUrl: mediaUrl(p.mediaPath) })),
+          })),
+        });
+      }),
     },
 
     "/api/review": {

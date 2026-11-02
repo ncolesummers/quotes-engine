@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { ApiError, type QuoteSearchParams } from "@/api";
+import { ApiError, type BookListParams, type QuoteSearchParams } from "@/api";
 
 /** Query keys in one place so mutations (#14+) can invalidate precisely. */
 export const queryKeys = {
@@ -10,6 +10,11 @@ export const queryKeys = {
     searches: ["quotes", "search"] as const,
     search: (params: Omit<QuoteSearchParams, "offset">) => ["quotes", "search", params] as const,
     detail: (id: number) => ["quotes", "detail", id] as const,
+  },
+  books: {
+    all: ["books"] as const,
+    list: (params: BookListParams) => ["books", "list", params] as const,
+    detail: (id: number) => ["books", "detail", id] as const,
   },
 };
 

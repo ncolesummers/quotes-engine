@@ -114,4 +114,66 @@ describe("migrate", () => {
       .map((r) => r.version);
     expect(versions).toEqual([1]);
   });
+
+  test("runs migrations with foreign keys off so a parent-table rebuild doesn't cascade", () => {
+    db.run("PRAGMA foreign_keys = ON");
+    writeFileSync(
+      join(dir, "0001_a.sql"),
+      `CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+       CREATE TABLE child (id INTEGER PRIMARY KEY,
+         parent_id INTEGER NOT NULL REFERENCES parent (id) ON DELETE CASCADE);`,
+    );
+    migrate(db, dir);
+    db.run("INSERT INTO parent (id, name) VALUES (1, 'p')");
+    db.run("INSERT INTO child (id, parent_id) VALUES (1, 1)");
+    writeFileSync(
+      join(dir, "0002_rebuild.sql"),
+      `CREATE TABLE parent_new (id INTEGER PRIMARY KEY, name TEXT);
+       INSERT INTO parent_new (id, name) SELECT id, name FROM parent;
+       DROP TABLE parent;
+       ALTER TABLE parent_new RENAME TO parent;`,
+    );
+
+    expect(migrate(db, dir)).toEqual(["0002_rebuild"]);
+
+    expect(db.query("SELECT id, parent_id FROM child").all()).toEqual([{ id: 1, parent_id: 1 }]);
+    expect(db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get()?.foreign_keys).toBe(
+      1,
+    );
+  });
+
+  test("rolls back a migration that leaves foreign key violations", () => {
+    db.run("PRAGMA foreign_keys = ON");
+    writeFileSync(
+      join(dir, "0001_a.sql"),
+      `CREATE TABLE parent (id INTEGER PRIMARY KEY);
+       CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent (id));
+       INSERT INTO child (id, parent_id) VALUES (1, 42);`,
+    );
+
+    expect(() => migrate(db, dir)).toThrow(/0001_a.*foreign key/i);
+    expect(db.query("SELECT name FROM sqlite_master WHERE name = 'child'").all()).toEqual([]);
+    expect(db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get()?.foreign_keys).toBe(
+      1,
+    );
+  });
+
+  test("a foreign key violation already in the database doesn't block later migrations", () => {
+    writeFileSync(
+      join(dir, "0001_a.sql"),
+      `CREATE TABLE parent (id INTEGER PRIMARY KEY);
+       CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent (id));`,
+    );
+    migrate(db, dir);
+    db.run("PRAGMA foreign_keys = OFF");
+    db.run("INSERT INTO child (id, parent_id) VALUES (1, 42)");
+    db.run("PRAGMA foreign_keys = ON");
+
+    writeFileSync(join(dir, "0002_b.sql"), "CREATE TABLE other (id INTEGER PRIMARY KEY);");
+    expect(migrate(db, dir)).toEqual(["0002_b"]);
+
+    writeFileSync(join(dir, "0003_c.sql"), "INSERT INTO child (id, parent_id) VALUES (2, 43);");
+    expect(() => migrate(db, dir)).toThrow(/0003_c.*foreign key/i);
+    expect(db.query("SELECT id FROM child ORDER BY id").all()).toEqual([{ id: 1 }]);
+  });
 });

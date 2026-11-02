@@ -1,10 +1,11 @@
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestDb } from "../../../test/helpers/db";
-import { openDb } from "./index";
+import { loadMigrations, migrate, openDb } from "./index";
+import { DEFAULT_MIGRATIONS_DIR } from "./migrate";
 
 const EXPECTED_TABLES = [
   "books",
@@ -82,7 +83,7 @@ describe("openDb", () => {
     const db = openDb(path);
     try {
       const n = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM schema_migrations").get()?.n;
-      expect(n).toBe(1);
+      expect(n).toBe(loadMigrations().length);
     } finally {
       db.close();
     }
@@ -203,5 +204,77 @@ describe("initial schema", () => {
     expect(indexed("post_quotes")).toContain("quote_id");
     expect(indexed("metric_snapshots")).toContain("post_id");
     expect(indexed("highlights")).toEqual(expect.arrayContaining(["book_id", "quote_id"]));
+  });
+});
+
+describe("0002 books migration", () => {
+  let db: Database;
+  let tmp: string | undefined;
+
+  afterEach(() => {
+    db.close();
+    if (tmp) rmSync(tmp, { recursive: true, force: true });
+    tmp = undefined;
+  });
+
+  test("books.asset_id is nullable and normalized_key is unique", () => {
+    db = createTestDb();
+    db.run(
+      "INSERT INTO books (title, author, normalized_key, source) VALUES ('A', 'B', 'a|b', 'caption')",
+    );
+    expect(() =>
+      db.run("INSERT INTO books (title, normalized_key, source) VALUES ('A', 'a|b', 'manual')"),
+    ).toThrow(/UNIQUE/i);
+    expect(() =>
+      db.run("INSERT INTO books (title, normalized_key, source) VALUES ('C', 'c', 'guess')"),
+    ).toThrow(/CHECK/i);
+  });
+
+  test("quotes.book_id references books and is cleared when the book is deleted", () => {
+    db = createTestDb();
+    const bookId = db
+      .query<{ id: number }, []>(
+        "INSERT INTO books (title, normalized_key, source) VALUES ('T', 't', 'caption') RETURNING id",
+      )
+      .get()?.id;
+    const quoteId = insertQuote(db, "Linked.");
+    expect(() => db.run(`UPDATE quotes SET book_id = 999 WHERE id = ${quoteId}`)).toThrow(
+      /FOREIGN KEY/i,
+    );
+    db.run(`UPDATE quotes SET book_id = ${bookId} WHERE id = ${quoteId}`);
+    db.run(`DELETE FROM books WHERE id = ${bookId}`);
+    expect(db.query(`SELECT book_id FROM quotes WHERE id = ${quoteId}`).get()).toEqual({
+      book_id: null,
+    });
+  });
+
+  test("upgrading a 0001 database keeps existing books and their highlights", () => {
+    tmp = mkdtempSync(join(tmpdir(), "qe-mig-"));
+    copyFileSync(join(DEFAULT_MIGRATIONS_DIR, "0001_init.sql"), join(tmp, "0001_init.sql"));
+    db = new Database(":memory:", { strict: true });
+    db.run("PRAGMA foreign_keys = ON");
+    migrate(db, tmp);
+    db.run(
+      "INSERT INTO books (id, asset_id, title, author) VALUES (7, 'A1', 'Dune', 'Frank Herbert')",
+    );
+    db.run(
+      "INSERT INTO highlights (annotation_uuid, book_id, text) VALUES ('u1', 7, 'Fear is the mind-killer.')",
+    );
+
+    migrate(db);
+
+    expect(db.query("SELECT id, asset_id, title, author, source FROM books").all()).toEqual([
+      { id: 7, asset_id: "A1", title: "Dune", author: "Frank Herbert", source: "apple_books" },
+    ]);
+    expect(db.query("SELECT book_id, text FROM highlights").all()).toEqual([
+      { book_id: 7, text: "Fear is the mind-killer." },
+    ]);
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(() =>
+      db.run("INSERT INTO highlights (annotation_uuid, book_id) VALUES ('u2', 999)"),
+    ).toThrow(/FOREIGN KEY/i);
+    expect(() => db.run("INSERT INTO books (asset_id, title) VALUES ('A1', 'Dupe')")).toThrow(
+      /UNIQUE/i,
+    );
   });
 });

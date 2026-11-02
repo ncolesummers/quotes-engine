@@ -73,6 +73,20 @@ describe("QuoteDetailPage", () => {
     expect(fetchMock.calls[0]?.pathname).toBe("/api/quotes/7");
   });
 
+  test("the book name links to its book page when the quote has a book", async () => {
+    fetchMock = mockFetch(() =>
+      json(
+        quoteDetail({
+          quote: { id: 7, sourceTitle: "Cat's Cradle", bookId: 4 },
+          book: { id: 4, title: "Cat's Cradle", author: "Kurt Vonnegut" },
+        }),
+      ),
+    );
+    renderPage();
+    const link = await screen.findByRole("link", { name: "Cat's Cradle" });
+    expect(link.getAttribute("href")).toBe("/books/4");
+  });
+
   test("shows a loading state, then the quote", async () => {
     fetchMock = mockFetch(() => json(quoteDetail({ quote: { id: 7 } })));
     renderPage();
@@ -272,7 +286,7 @@ describe("QuoteDetailPage", () => {
       expect(s.getByText("Read on the train")).toBeDefined();
       expect(s.getByText("Aug 20, 2024")).toBeDefined();
       expect(s.getByRole("link", { name: "Slaughterhouse-Five" }).getAttribute("href")).toBe(
-        "/books?q=Slaughterhouse-Five",
+        "/books/1",
       );
     });
 

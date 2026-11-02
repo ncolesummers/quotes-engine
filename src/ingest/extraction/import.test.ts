@@ -274,6 +274,61 @@ describe("importExtractions", () => {
     expect(summary.errors).toEqual([]);
     expect(existsSync(join(opts.importedDir, "a.json"))).toBe(true);
   });
+
+  test("sets each quote's book from its source, merging curly/straight title variants", () => {
+    upsertPost(db, { igMediaId: "ig1" });
+    upsertPost(db, { igMediaId: "ig2" });
+    // An earlier quote without a source gets its book once a later extraction names it.
+    upsertQuote(db, { text: WILDE });
+    const file = writeFile("a.json", {
+      results: [
+        {
+          ig_media_id: "ig1",
+          quotes: [
+            quote("Hope is a dangerous thing.", { author: "Robin Hobb", source: "Fool’s Errand" }),
+            quote(WILDE, { author: "Oscar Wilde", source: "De Profundis" }),
+          ],
+        },
+        {
+          ig_media_id: "ig2",
+          quotes: [
+            quote("A second line from the same book.", {
+              author: "Robin Hobb",
+              source: "Fool's Errand",
+            }),
+            quote("No source for this one at all."),
+          ],
+        },
+      ],
+    });
+
+    importExtractions(db, [file], opts);
+
+    expect(
+      db
+        .query(
+          `SELECT q.text, b.title, b.author, b.source FROM quotes q
+           LEFT JOIN books b ON b.id = q.book_id ORDER BY q.text`,
+        )
+        .all(),
+    ).toEqual([
+      {
+        text: "A second line from the same book.",
+        title: "Fool’s Errand",
+        author: "Robin Hobb",
+        source: "caption",
+      },
+      { text: WILDE, title: "De Profundis", author: "Oscar Wilde", source: "caption" },
+      {
+        text: "Hope is a dangerous thing.",
+        title: "Fool’s Errand",
+        author: "Robin Hobb",
+        source: "caption",
+      },
+      { text: "No source for this one at all.", title: null, author: null, source: null },
+    ]);
+    expect(count("books")).toBe(2);
+  });
 });
 
 describe("listExtractionFiles", () => {

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { Book, BookSource } from "../../src/server/repos/books";
 import { type Post, recordMetrics, upsertPost } from "../../src/server/repos/posts";
 import {
   getQuote,
@@ -7,6 +8,7 @@ import {
   linkPostQuote,
   type Quote,
 } from "../../src/server/repos/quotes";
+import { bookKey } from "../../src/server/text/book-key";
 import { normalizeQuote } from "../../src/server/text/normalize";
 
 export interface SeedQuote {
@@ -33,9 +35,12 @@ export interface SeedLink {
 }
 
 export interface SeedBook {
-  assetId?: string;
+  /** Defaults to a generated id; pass null for a book not from Apple Books. */
+  assetId?: string | null;
   title?: string | null;
   author?: string | null;
+  /** Defaults to "apple_books" when there's an asset id, else "manual". */
+  source?: BookSource;
 }
 
 export interface SeedHighlight {
@@ -46,13 +51,6 @@ export interface SeedHighlight {
   createdAt?: string | null;
   quoteId?: number | null;
   annotationUuid?: string;
-}
-
-export interface Book {
-  id: number;
-  assetId: string;
-  title: string | null;
-  author: string | null;
 }
 
 export interface Highlight {
@@ -132,13 +130,23 @@ export function seed(db: Database): Seeder {
       return p;
     },
 
-    book({ assetId, title = null, author = null } = {}) {
+    /** Insert a book directly, keyed as `findOrCreateBook` would but without merging. */
+    book({ assetId, title = null, author = null, source } = {}) {
+      const asset = assetId === undefined ? `asset-${next()}` : assetId;
       const book = db
         .query<Book, Record<string, string | null>>(
-          `INSERT INTO books (asset_id, title, author) VALUES ($assetId, $title, $author)
-           RETURNING id, asset_id AS assetId, title, author`,
+          `INSERT INTO books (asset_id, title, author, normalized_key, source)
+           VALUES ($assetId, $title, $author, $key, $source)
+           RETURNING id, asset_id AS assetId, title, author, normalized_key AS normalizedKey,
+             source`,
         )
-        .get({ assetId: assetId ?? `asset-${next()}`, title, author });
+        .get({
+          assetId: asset,
+          title,
+          author,
+          key: bookKey(title, author),
+          source: source ?? (asset ? "apple_books" : "manual"),
+        });
       if (!book) throw new Error("seed.book: insert failed");
       return book;
     },
