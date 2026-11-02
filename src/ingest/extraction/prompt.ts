@@ -66,6 +66,22 @@ export function outPathForBatch(batchPath: string, extractionsDir: string): stri
   return outPath;
 }
 
+/**
+ * Attribution rules shared with the classification prompt (`classification-prompt.ts`): caption
+ * formats, hashtag decoding and process tags. Each line is a list item indented under a step.
+ */
+export const ATTRIBUTION_RULES = `   - If the caption uses the \`📖 Title — Author\` format (also \`📖 Title · Author\`), take \`source\` = Title and \`author\` = Author from it.
+   - Otherwise most captions give the author and book only as hashtags. Turn them back into proper names: \`#joeabercrombie\` → "Joe Abercrombie", \`#thefirstlaw\` → "The First Law", \`#jamessacorey\` → "James S. A. Corey", \`#theexpanse\` → "The Expanse", \`#harukimurakami\` → "Haruki Murakami", \`#kafkaontheshore\` → "Kafka on the Shore". Use the real, correctly spelled and capitalized name of the person or book.
+   - An attribution printed in the image counts too.
+   - Set \`source\` only when a book or series is clearly named (by a tag, the caption or the image). Otherwise use null. Use null for \`author\` when nothing names one.
+   - **Ignore process/tool tags**: \`#pythonimaginglibrary\`, \`#p5js\`, \`#gnuterrypratchett\` and generic tags (\`#quote\`, \`#books\`, \`#reading\`, \`#bookstagram\`, ...) are never an author or a source.`;
+
+/** The account's own commentary is not a quote (shared with the classification prompt). */
+export const COMMENTARY_RULE = `**The account's own commentary is not a quote.** Short captions like "Find your joy wherever you can." are usually the poster's comment; the quote is then in the image. Only record text that is quoted from a book, person or other work.`;
+
+/** Posts without a quote (shared with the classification prompt). */
+export const NON_QUOTE_RULE = `**Non-quote posts** (e.g. "Wine ❤️", thanking someone for a mug, a photo with no quoted text) get \`"quotes": []\` and \`"no_quote": true\`.`;
+
 function compactExample(): string {
   // One result per line keeps the example short but readable.
   const lines = EXAMPLE_OUTPUT.results.map((r) => `  ${JSON.stringify(r)}`);
@@ -89,13 +105,9 @@ It looks like \`{"posts": [{"ig_media_id", "posted_at", "caption", "media_paths"
 2. Read the caption. The quote may be in the image, the caption, or both. Set \`found_in\` to \`"image"\`, \`"caption"\` or \`"both"\` accordingly.
 3. **Transcribe the quote exactly** as written: keep the original wording, punctuation, quotation marks, dashes, ellipses and capitalization. Do not paraphrase, fix, translate or complete it. Join lines that are only wrapped for layout into one line; keep real paragraph breaks as \`\\n\`. Leave out decorative quote marks around the whole quote and the attribution line (e.g. "— Stephen King").
 4. **Attribution (\`author\`, \`source\`)**:
-   - If the caption uses the \`📖 Title — Author\` format (also \`📖 Title · Author\`), take \`source\` = Title and \`author\` = Author from it.
-   - Otherwise most captions give the author and book only as hashtags. Turn them back into proper names: \`#joeabercrombie\` → "Joe Abercrombie", \`#thefirstlaw\` → "The First Law", \`#jamessacorey\` → "James S. A. Corey", \`#theexpanse\` → "The Expanse", \`#harukimurakami\` → "Haruki Murakami", \`#kafkaontheshore\` → "Kafka on the Shore". Use the real, correctly spelled and capitalized name of the person or book.
-   - An attribution printed in the image counts too.
-   - Set \`source\` only when a book or series is clearly named (by a tag, the caption or the image). Otherwise use null. Use null for \`author\` when nothing names one.
-   - **Ignore process/tool tags**: \`#pythonimaginglibrary\`, \`#p5js\`, \`#gnuterrypratchett\` and generic tags (\`#quote\`, \`#books\`, \`#reading\`, \`#bookstagram\`, ...) are never an author or a source.
-5. **The account's own commentary is not a quote.** Short captions like "Find your joy wherever you can." are usually the poster's comment; the quote is then in the image. Only record text that is quoted from a book, person or other work.
-6. **Non-quote posts** (e.g. "Wine ❤️", thanking someone for a mug, a photo with no quoted text) get \`"quotes": []\` and \`"no_quote": true\`.
+${ATTRIBUTION_RULES}
+5. ${COMMENTARY_RULE}
+6. ${NON_QUOTE_RULE}
 7. **Carousels may contain several quotes**: add one entry to \`quotes\` per distinct quote. If the same quote appears in the image and the caption, record it once with \`found_in: "both"\`.
 8. **\`confidence\`** is a number from 0 to 1 for the whole entry (text and attribution). Use about 0.9–1 when the text is clearly legible and the attribution is explicit. Lower it (≤ 0.7) when the text is hard to read, cut off or stylized, or when the author/source is a guess (e.g. inferred from an ambiguous hashtag). Entries below 0.8 go to a human review queue, so be honest.
 

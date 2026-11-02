@@ -159,7 +159,7 @@ function importResult(db: Database, result: ExtractionResult, extractedAt: strin
  * Move `file` into `dir` without overwriting an earlier archive of the same name: `a.json`
  * becomes `a-1.json`, `a-2.json`, ... Returns the destination path.
  */
-function moveInto(file: string, dir: string): string {
+export function moveInto(file: string, dir: string): string {
   mkdirSync(dir, { recursive: true });
   const ext = extname(file);
   const stem = basename(file, ext);

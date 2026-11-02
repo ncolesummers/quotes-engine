@@ -12,6 +12,10 @@
     "typecheck": "tsc --noEmit",
     "import:extractions": "bun scripts/import-extractions.ts",
     "extract:batches": "bun scripts/extraction-batches.ts",
+    "ocr": "bun scripts/ocr.ts",
+    "extract:classify-batches": "bun scripts/classification-batches.ts",
+    "extract:classify-prompt": "bun scripts/classification-prompt.ts",
+    "extract:assemble": "bun scripts/assemble-extractions.ts",
     "docs:prompt": "bun scripts/extraction-prompt.ts --doc",
     "dev:seed": "bun scripts/dev-seed.ts",
     "sync:instagram": "bun scripts/sync-instagram.ts"
