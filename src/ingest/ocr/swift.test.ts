@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,6 +13,21 @@ const RENDER_SCRIPT = join(import.meta.dir, "../../../test/fixtures/ocr/render-t
 
 test("Vision OCR is never available off macOS, even with Swift installed", () => {
   expect(isVisionOcrAvailable("linux")).toBe(false);
+});
+
+test("a CLI call that hangs is killed after the timeout and rejects", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "quotes-ocr-hang-"));
+  try {
+    const binPath = join(dir, "hang.sh");
+    writeFileSync(binPath, "#!/bin/sh\nexec sleep 30\n");
+    chmodSync(binPath, 0o755);
+    const runner = createSwiftOcrRunner({ binPath, timeoutMs: 200 });
+    const started = performance.now();
+    await expect(runner(["/x.jpg"])).rejects.toThrow(/timed out after 200ms/);
+    expect(performance.now() - started).toBeLessThan(5_000);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // Opt-in: needs Apple's Vision framework, so it runs only on macOS with `swift` installed.

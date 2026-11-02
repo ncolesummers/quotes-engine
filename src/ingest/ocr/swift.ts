@@ -41,21 +41,44 @@ export function ensureOcrBinary({
   return binPath;
 }
 
-/** An `OcrRunner` that runs the compiled Vision CLI once per call. */
+/** Per-call limit. A 1080px image takes well under a second; Vision has been seen to hang. */
+export const DEFAULT_OCR_TIMEOUT_MS = 60_000;
+
+/**
+ * An `OcrRunner` that runs the compiled Vision CLI once per call. A call that takes longer than
+ * `timeoutMs` is killed and rejects, so the images are reported as failed and retried next run.
+ */
 export function createSwiftOcrRunner({
   binPath = DEFAULT_OCR_BIN_PATH,
+  timeoutMs = DEFAULT_OCR_TIMEOUT_MS,
 }: {
   binPath?: string;
+  timeoutMs?: number;
 } = {}): OcrRunner {
   return async (paths) => {
     if (paths.length === 0) return [];
     const proc = Bun.spawn([binPath, ...paths], { stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    if (exitCode !== 0) throw new Error(`OCR CLI exited ${exitCode}: ${stderr.trim()}`);
-    return parseOcrOutput(stdout);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Reject as soon as the timer fires: a stuck grandchild could hold the pipes open past kill.
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        proc.kill("SIGKILL");
+        reject(new Error(`OCR CLI timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+    try {
+      const [stdout, stderr, exitCode] = await Promise.race([
+        Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]),
+        timeout,
+      ]);
+      if (exitCode !== 0) throw new Error(`OCR CLI exited ${exitCode}: ${stderr.trim()}`);
+      return parseOcrOutput(stdout);
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
