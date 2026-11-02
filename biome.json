@@ -13,7 +13,8 @@
       "!coverage",
       "!bun.lock",
       "!src/web/components/ui",
-      "!docs/extraction-prompt.md"
+      "!docs/extraction-prompt.md",
+      "!docs/classification-prompt.md"
     ]
   },
   "formatter": {

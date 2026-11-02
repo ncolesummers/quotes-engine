@@ -1,0 +1,32 @@
+[
+  {
+    "path": "/media/17890000000000001.jpg",
+    "lines": [
+      {
+        "text": "— Joe Abercrombie",
+        "confidence": 0.9,
+        "box": { "x": 0.5, "y": 0.8, "w": 0.4, "h": 0.04 }
+      },
+      {
+        "text": "remember to be",
+        "confidence": 1,
+        "box": { "x": 0.52, "y": 0.302, "w": 0.4, "h": 0.05 }
+      },
+      {
+        "text": "Once you've got a",
+        "confidence": 0.95,
+        "box": { "x": 0.1, "y": 0.2, "w": 0.8, "h": 0.05 }
+      },
+      {
+        "text": "task to do, you",
+        "confidence": 0.85,
+        "box": { "x": 0.08, "y": 0.3, "w": 0.4, "h": 0.05 }
+      }
+    ]
+  },
+  {
+    "path": "/media/17890000000000002_1.jpg",
+    "lines": [],
+    "error": "Could not load image"
+  }
+]
