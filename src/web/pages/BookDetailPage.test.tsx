@@ -22,6 +22,7 @@ afterEach(() => {
 
 const detail = {
   book: bookSummary(),
+  possibleDuplicates: [],
   entries: [
     bookEntry({
       quoteId: 10,

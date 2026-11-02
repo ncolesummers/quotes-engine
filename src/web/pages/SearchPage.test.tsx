@@ -171,4 +171,24 @@ describe("SearchPage", () => {
     const offsets = fetchMock.callsTo("/api/quotes").map((u) => u.searchParams.get("offset"));
     expect(offsets).toEqual(["0", "1"]);
   });
+
+  test("“No book” shows only quotes without a book, kept in the URL", async () => {
+    fetchMock = mockFetch((url) =>
+      url.searchParams.get("noBook") === "1"
+        ? json({ items: [quoteItem({ id: 2, text: "An orphan line." })], total: 1 })
+        : json({ items: [quoteItem({ id: 1, text: "Has a book." })], total: 1 }),
+    );
+    const { location } = renderWithProviders(<SearchPage />);
+    await screen.findByText("Has a book.");
+
+    const toggle = screen.getByRole("button", { name: /no book/i });
+    fireEvent.click(toggle);
+    await screen.findByText("An orphan line.");
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(location.history?.at(-1)).toBe("/?nobook=1");
+
+    fireEvent.click(toggle);
+    await screen.findByText("Has a book.");
+    expect(location.history?.at(-1)).toBe("/");
+  });
 });

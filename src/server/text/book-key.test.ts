@@ -30,6 +30,19 @@ describe("bookKey", () => {
     expect(bookKey(" — ", null)).toBeNull();
   });
 
+  test("folds & into and, so both spellings share a key", () => {
+    expect(bookKey("Daisy Jones & The Six", "Taylor Jenkins Reid")).toBe(
+      "daisy jones and the six|taylor jenkins reid",
+    );
+    expect(bookKey("Daisy Jones&the Six", "Taylor Jenkins Reid")).toBe(
+      bookKey("Daisy Jones and the Six", "Taylor Jenkins Reid"),
+    );
+    expect(bookKey("Good Omens", "Neil Gaiman & Terry Pratchett")).toBe(
+      "good omens|neil gaiman and terry pratchett",
+    );
+    expect(bookKey("＆", null)).toBe("and");
+  });
+
   test("normalizes compatibility forms (NFKC) and strips emoji", () => {
     expect(bookKey("📖 Ｍeditations", "Marcus Aurelius")).toBe("meditations|marcus aurelius");
   });

@@ -62,6 +62,8 @@ export interface SearchQuotesParams {
   book?: string;
   posted?: "yes" | "no";
   minPostings?: number;
+  /** Only quotes not linked to any book (#34). */
+  noBook?: boolean;
   sort: QuoteSort;
   limit: number;
   offset: number;
@@ -274,6 +276,7 @@ export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSea
       WHERE h.quote_id = q.id AND b.title LIKE $book ESCAPE '\\'))`);
     binds.book = likeContains(params.book);
   }
+  if (params.noBook) where.push("q.book_id IS NULL");
   if (params.posted === "yes") having.push("postingCount > 0");
   if (params.posted === "no") having.push("postingCount = 0");
   if (params.minPostings !== undefined) {

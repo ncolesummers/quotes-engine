@@ -685,6 +685,7 @@ describe("books", () => {
         postedCount: 0,
         unpostedHighlightCount: 0,
         lastPostedAt: null,
+        issues: [],
       },
       {
         id: hobb.id,
@@ -696,6 +697,7 @@ describe("books", () => {
         postedCount: 2,
         unpostedHighlightCount: 1,
         lastPostedAt: "2026-10-25T00:00:00.000Z",
+        issues: [],
       },
     ]);
     const byQuotes = await get("/api/books?sort=quotes");
@@ -776,6 +778,119 @@ describe("books", () => {
     expect(books.body.items).toEqual([
       expect.objectContaining({ id: r.body.quote.bookId, title: "Fool’s Errand", quoteCount: 1 }),
     ]);
+  });
+});
+
+describe("book cleanup (#34)", () => {
+  function linkBook(quoteId: number, bookId: number) {
+    db.run(`UPDATE quotes SET book_id = ${bookId} WHERE id = ${quoteId}`);
+  }
+
+  test("POST /api/books/:id/merge moves the other book's quotes here and returns the detail", async () => {
+    const keep = s.book({ assetId: null, title: "1Q84", author: "Haruki Murakami" });
+    const drop = s.book({ assetId: null, title: "IQ84", author: "Haruki Murakami" });
+    const q = s.quote({ text: "Something that has not yet happened" });
+    linkBook(q.id, drop.id);
+    s.highlight({ bookId: drop.id, text: "A loose highlight" });
+
+    const r = await send("POST", `/api/books/${keep.id}/merge`, { dropId: drop.id });
+    expect(r.status).toBe(200);
+    expect(r.body.book).toMatchObject({ id: keep.id, title: "1Q84", quoteCount: 1 });
+    expect(r.body.entries.map((e: { text: string }) => e.text)).toEqual([
+      "Something that has not yet happened",
+      "A loose highlight",
+    ]);
+    expect(r.body.possibleDuplicates).toEqual([]);
+    expectError(await get(`/api/books/${drop.id}`), 404);
+  });
+
+  test("POST /api/books/:id/merge: 400 on itself or a bad body, 404 on unknown books", async () => {
+    const b = s.book({ assetId: null, title: "Dune", author: "Frank Herbert" });
+    expectError(await send("POST", `/api/books/${b.id}/merge`, {}), 400);
+    expectError(await send("POST", `/api/books/${b.id}/merge`, { dropId: b.id }), 400);
+    expectError(await send("POST", `/api/books/${b.id}/merge`, { dropId: 999 }), 404);
+    expectError(await send("POST", "/api/books/999/merge", { dropId: b.id }), 404);
+  });
+
+  test("PATCH /api/books/:id edits title and author", async () => {
+    const b = s.book({ assetId: null, title: "Senlin Ascends", author: "Mark Lawrence" });
+    const r = await send("PATCH", `/api/books/${b.id}`, { author: "Josiah Bancroft" });
+    expect(r.status).toBe(200);
+    expect(r.body.book).toMatchObject({
+      id: b.id,
+      title: "Senlin Ascends",
+      author: "Josiah Bancroft",
+      normalizedKey: "senlin ascends|josiah bancroft",
+    });
+    const cleared = await send("PATCH", `/api/books/${b.id}`, { author: "" });
+    expect(cleared.body.book.author).toBeNull();
+  });
+
+  test("PATCH /api/books/:id: 409 with conflictId when another book has that title and author", async () => {
+    const wrong = s.book({ assetId: null, title: "The Faith of Beasts", author: "Jessyn" });
+    const right = s.book({
+      assetId: null,
+      title: "The Faith of Beasts",
+      author: "James S.A. Corey",
+    });
+    const r = await send("PATCH", `/api/books/${wrong.id}`, { author: "James S. A. Corey" });
+    expect(r.status).toBe(409);
+    expect(r.body).toEqual({ error: expect.any(String), conflictId: right.id });
+  });
+
+  test("PATCH /api/books/:id: 400 on empty title or no fields, 404 on unknown", async () => {
+    const b = s.book({ assetId: null, title: "Dune", author: "Frank Herbert" });
+    expectError(await send("PATCH", `/api/books/${b.id}`, { title: " " }), 400);
+    expectError(await send("PATCH", `/api/books/${b.id}`, {}), 400);
+    expectError(await send("PATCH", `/api/books/${b.id}`, { source: "x" }), 400);
+    expectError(await send("PATCH", "/api/books/999", { title: "X" }), 404);
+  });
+
+  test("DELETE /api/books/:id deletes an empty book, refuses one with quotes or highlights", async () => {
+    const empty = s.book({ assetId: null, title: "Empty", author: null });
+    const used = s.book({ assetId: null, title: "Used", author: null });
+    linkBook(s.quote({ text: "keeps it" }).id, used.id);
+
+    const refused = await send("DELETE", `/api/books/${used.id}`, undefined);
+    expectError(refused, 409);
+    const ok = await send("DELETE", `/api/books/${empty.id}`, undefined);
+    expect(ok).toEqual({ status: 200, body: { id: empty.id } });
+    expectError(await get(`/api/books/${empty.id}`), 404);
+    expectError(await send("DELETE", `/api/books/${empty.id}`, undefined), 404);
+  });
+
+  test("DELETE /api/books/:id is guarded against cross-origin requests", async () => {
+    const b = s.book({ assetId: null, title: "Empty", author: null });
+    const res = await fetch(url(`/api/books/${b.id}`), { method: "DELETE" });
+    expect(res.status).toBe(415);
+  });
+
+  test("GET /api/books?attention=1 lists only books needing a look, with their issues", async () => {
+    const a = s.book({ assetId: null, title: "Senlin Ascends", author: "Mark Lawrence" });
+    const b = s.book({ assetId: null, title: "Senlin Ascends", author: "Josiah Bancroft" });
+    const bare = s.book({ assetId: null, title: "The Jesus of Suburbia", author: null });
+    s.book({ assetId: null, title: "Dune", author: "Frank Herbert" });
+    const r = await get("/api/books?attention=1");
+    expect(r.status).toBe(200);
+    expect(r.body.items.map((x: { id: number; issues: string[] }) => [x.id, x.issues])).toEqual([
+      [a.id, ["possible_duplicate"]],
+      [b.id, ["possible_duplicate"]],
+      [bare.id, ["no_author"]],
+    ]);
+    const detail = await get(`/api/books/${a.id}`);
+    expect(detail.body.possibleDuplicates).toEqual([
+      { id: b.id, title: "Senlin Ascends", author: "Josiah Bancroft", quoteCount: 0, score: 1 },
+    ]);
+  });
+
+  test("GET /api/quotes?noBook=1 lists only quotes without a book", async () => {
+    const book = s.book({ assetId: null, title: "Dune", author: "Frank Herbert" });
+    const linked = s.quote({ text: "Fear is the mind-killer" });
+    linkBook(linked.id, book.id);
+    const loose = s.quote({ text: "An orphan line" });
+    const r = await get("/api/quotes?noBook=1");
+    expect(r.body.items.map((q: { id: number }) => q.id)).toEqual([loose.id]);
+    expect(r.body.total).toBe(1);
   });
 });
 

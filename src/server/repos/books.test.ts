@@ -177,6 +177,7 @@ describe("listBooks", () => {
         postedCount: 1,
         unpostedHighlightCount: 1,
         lastPostedAt: "2026-04-01T00:00:00.000Z",
+        issues: [],
       },
       {
         id: hobb.id,
@@ -188,6 +189,7 @@ describe("listBooks", () => {
         postedCount: 2,
         unpostedHighlightCount: 0,
         lastPostedAt: "2026-03-01T00:00:00.000Z",
+        issues: [],
       },
     ]);
   });
@@ -256,6 +258,7 @@ describe("getBookDetail", () => {
       postedCount: 1,
       unpostedHighlightCount: 1,
       lastPostedAt: "2026-02-01T00:00:00.000Z",
+      issues: [],
     });
     expect(detail?.entries).toEqual([
       {
