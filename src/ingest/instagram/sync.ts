@@ -87,26 +87,40 @@ export function mediaTargets(item: InstagramMedia): MediaTarget[] {
   return url ? [target(url)] : [];
 }
 
-/** Downloads with `fetch`, writing to a `.part` file renamed into place on success. */
+export const DEFAULT_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/** `origin + pathname` of a URL, dropping the signed query string from error messages. */
+function describeUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Downloads with `fetch`, writing to a `.part` file renamed into place on success. The whole
+ * download (headers and body) is aborted after `timeoutMs` so a stalled CDN request cannot hang
+ * the sync.
+ */
 export function createFetchDownloader(
   fetch: FetchLike = (input, init) => globalThis.fetch(input, init),
+  { timeoutMs = DEFAULT_DOWNLOAD_TIMEOUT_MS }: { timeoutMs?: number } = {},
 ): Downloader {
   return async (url, path) => {
-    const res = await fetch(url);
-    if (!res.ok) {
-      let where = url;
-      try {
-        const parsed = new URL(url);
-        where = `${parsed.origin}${parsed.pathname}`; // drop the signed query string
-      } catch {}
-      throw new Error(`HTTP ${res.status} downloading ${where}`);
-    }
+    const where = describeUrl(url);
     const tmp = `${path}.part`;
     try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) throw new Error(`HTTP ${res.status} downloading ${where}`);
       await Bun.write(tmp, res);
       renameSync(tmp, path);
     } catch (err) {
       rmSync(tmp, { force: true });
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        throw new Error(`Timed out after ${timeoutMs}ms downloading ${where}`);
+      }
       throw err;
     }
   };
@@ -211,7 +225,11 @@ export async function syncInstagram(options: SyncOptions): Promise<SyncSummary> 
         if (metricsOnly && post.mediaPath) {
           summary.skippedDownloads += targets.length;
         } else if (targets.length > 0) {
-          pending.push(saveMedia(item.id, targets));
+          pending.push(
+            saveMedia(item.id, targets).catch((err) => {
+              summary.errors.push({ igMediaId: item.id, message: errorMessage(err) });
+            }),
+          );
         }
       } catch (err) {
         summary.errors.push({ igMediaId: item.id, message: errorMessage(err) });

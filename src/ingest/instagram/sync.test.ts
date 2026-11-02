@@ -272,6 +272,24 @@ describe("syncInstagram", () => {
     expect(peak).toBe(3);
   });
 
+  test("an unexpected failure while saving media is recorded and the run still returns", async () => {
+    const dl = fakeDownloader();
+    const summary = await syncInstagram({
+      db,
+      client: fakeClient([media("a"), media("b")]),
+      mediaDir,
+      now: () => T1,
+      download: dl.download,
+      fileExists: (path) => {
+        if (path.endsWith("a.jpg")) throw new Error("EACCES");
+        return false;
+      },
+    });
+    expect(summary.errors).toEqual([{ igMediaId: "a", message: "EACCES" }]);
+    expect(summary).toMatchObject({ seen: 2, downloads: 1 });
+    expect(getPostByIgMediaId(db, "b")?.mediaPath).toBe("b.jpg");
+  });
+
   test("metricsOnly skips downloads for posts that already have media", async () => {
     const dl = fakeDownloader();
     await syncInstagram({
@@ -364,6 +382,19 @@ describe("createFetchDownloader", () => {
     const download = createFetchDownloader(async () => new Response("no", { status: 403 }));
     const path = join(mediaDir, "f.jpg");
     await expect(download("https://cdn.example/f.jpg", path)).rejects.toThrow("HTTP 403");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("aborts a download that stalls past the timeout", async () => {
+    const stalled = (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      });
+    const download = createFetchDownloader(stalled, { timeoutMs: 20 });
+    const path = join(mediaDir, "f.jpg");
+    await expect(download("https://cdn.example/f.jpg?sig=secret", path)).rejects.toThrow(
+      "Timed out after 20ms downloading https://cdn.example/f.jpg",
+    );
     expect(existsSync(path)).toBe(false);
   });
 });
