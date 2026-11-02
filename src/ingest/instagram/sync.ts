@@ -53,7 +53,8 @@ export interface MediaTarget {
   fileName: string;
 }
 
-const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "heic"]);
+/** Image extensions sync saves media under; the extraction batch writer matches the same set. */
+export const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "heic"]);
 
 /** Image file extension from a media URL's path, defaulting to `jpg`. */
 export function mediaExtension(url: string): string {

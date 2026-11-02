@@ -51,9 +51,19 @@ export const EXAMPLE_OUTPUT: ExtractionFile = {
   ],
 };
 
-/** Where the result for a batch goes: `<extractionsDir>/<batch-name>.json`, read by `import:extractions`. */
+/**
+ * Where the result for a batch goes: `<extractionsDir>/<batch-name>.json`, read by
+ * `import:extractions`. Throws when that is the batch path itself (e.g. a result file was passed
+ * instead of a `todo/` batch), since the agent would overwrite its own input.
+ */
 export function outPathForBatch(batchPath: string, extractionsDir: string): string {
-  return join(extractionsDir, basename(batchPath));
+  const outPath = join(extractionsDir, basename(batchPath));
+  if (resolve(outPath) === resolve(batchPath)) {
+    throw new Error(
+      `${batchPath} is a result path; the agent would overwrite it. Pass a batch from todo/.`,
+    );
+  }
+  return outPath;
 }
 
 function compactExample(): string {
@@ -75,7 +85,7 @@ It looks like \`{"posts": [{"ig_media_id", "posted_at", "caption", "media_paths"
 
 ## For every post
 
-1. **Read every image** in \`media_paths\` with the Read tool, one by one. Do not skip any: on a carousel each image can carry a different quote. Most quotes are in the image, not the caption.
+1. **Read every image** in \`media_paths\` with the Read tool, one by one. Do not skip any: on a carousel each image can carry a different quote. Most quotes are in the image, not the caption. If any image cannot be read (the Read fails, or it shows nothing), leave the post out of \`results\` entirely, so it stays queued for a later run. Do not mark it \`no_quote\`.
 2. Read the caption. The quote may be in the image, the caption, or both. Set \`found_in\` to \`"image"\`, \`"caption"\` or \`"both"\` accordingly.
 3. **Transcribe the quote exactly** as written: keep the original wording, punctuation, quotation marks, dashes, ellipses and capitalization. Do not paraphrase, fix, translate or complete it. Join lines that are only wrapped for layout into one line; keep real paragraph breaks as \`\\n\`. Leave out decorative quote marks around the whole quote and the attribution line (e.g. "— Stephen King").
 4. **Attribution (\`author\`, \`source\`)**:
@@ -97,7 +107,7 @@ Write the result file with the Write tool to exactly this path:
 
 It must be valid JSON matching this schema exactly — no extra keys, no comments, no Markdown fences in the file:
 
-- \`"results"\`: an array with **exactly one result per input post, in input order** (same \`ig_media_id\`s, none skipped, none added).
+- \`"results"\`: an array with **one result per input post, in input order** (same \`ig_media_id\`s, none added). The only posts left out are those with an image you cannot read (step 1).
 - Each result: \`"ig_media_id"\` (string, copied from the input), \`"quotes"\` (array), \`"no_quote"\` (boolean; true only when \`quotes\` is empty because the post has no quote).
 - Each quote: \`"text"\` (non-empty string), \`"author"\` (string or null), \`"source"\` (string or null), \`"found_in"\` (\`"caption"\`, \`"image"\` or \`"both"\`), \`"confidence"\` (number 0–1).
 
@@ -111,9 +121,9 @@ ${compactExample()}
 
 Reply with exactly one line and nothing else, in this form:
 
-    ${batch}: <posts> posts, <quotes> quotes, <no_quote> no_quote
+    ${batch}: <posts> posts, <quotes> quotes, <no_quote> no_quote, <unreadable> unreadable
 
-for example \`batch-007: 20 posts, 18 quotes, 2 no_quote\`.
+for example \`batch-007: 20 posts, 18 quotes, 2 no_quote, 0 unreadable\`, where \`<unreadable>\` counts the posts left out because an image could not be read.
 `;
 }
 

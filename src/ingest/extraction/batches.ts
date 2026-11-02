@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { listUnextractedPosts, type Post } from "../../server/repos/posts";
+import { IMAGE_EXTENSIONS } from "../instagram/sync";
+import { listExtractionFiles } from "./import";
 
 export const DEFAULT_EXTRACTIONS_DIR = "data/extractions";
 export const DEFAULT_BATCH_SIZE = 20;
@@ -23,7 +25,10 @@ export interface BatchFile {
 export interface WriteBatchesOptions {
   /** Directory holding downloaded media, e.g. `data/media`. */
   mediaDir: string;
-  /** Directory the batch files are written to; cleared first. E.g. `data/extractions/todo`. */
+  /**
+   * Directory the batch files are written to; cleared first. E.g. `data/extractions/todo`. Its
+   * parent is where agents write results, and must hold no unimported result files.
+   */
   todoDir: string;
   size?: number;
 }
@@ -35,9 +40,14 @@ export interface WriteBatchesSummary {
   posts: number;
   /** Unextracted posts left out because they have neither media nor a caption. */
   skipped: number;
+  /**
+   * `ig_media_id`s of image/carousel posts left out because none of their media files are on
+   * disk (e.g. a failed download). Re-run `sync:instagram`, then batch again.
+   */
+  missingMedia: string[];
 }
 
-const IMAGE_EXT = "(?:jpg|jpeg|png|webp|gif|heic)";
+const IMAGE_EXT = `(?:${[...IMAGE_EXTENSIONS].join("|")})`;
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -75,6 +85,18 @@ export function findMediaFiles(mediaDir: string, igMediaId: string): string[] {
     .map((f) => join(dir, f.name));
 }
 
+/**
+ * True when sync recorded (or should have) image files for the post but none are on disk. Such
+ * posts must not be extracted from the caption alone: the quote is usually in the image, and the
+ * post would be marked extracted for good. Videos may legitimately have no image.
+ */
+export function isMissingMedia(post: Post, mediaPaths: string[]): boolean {
+  if (mediaPaths.length > 0) return false;
+  return (
+    post.mediaPath !== null || post.mediaType === "IMAGE" || post.mediaType === "CAROUSEL_ALBUM"
+  );
+}
+
 /** The batch entry for a post, or null when it has neither media nor a caption. */
 export function toBatchPost(post: Post, mediaPaths: string[]): BatchPost | null {
   const caption = post.caption?.trim() ? post.caption : null;
@@ -90,15 +112,32 @@ export function toBatchPost(post: Post, mediaPaths: string[]): BatchPost | null 
 /**
  * Write every unextracted post (oldest first) into `todoDir/batch-NNN.json` files of `size`
  * posts each. `todoDir` is emptied first, so re-running reflects the current DB state.
+ *
+ * Throws if result files are still waiting in `todoDir`'s parent: batch names restart at
+ * `batch-001` on every run, so new agents would overwrite results that were never imported.
  */
 export function writeBatches(
   db: Database,
   { mediaDir, todoDir, size = DEFAULT_BATCH_SIZE }: WriteBatchesOptions,
 ): WriteBatchesSummary {
+  const pending = listExtractionFiles(dirname(resolve(todoDir)));
+  if (pending.length > 0) {
+    throw new Error(
+      `${pending.length} result file(s) in ${dirname(todoDir)} are not imported yet. ` +
+        "Run `bun run import:extractions` first, so new batches can't overwrite them.",
+    );
+  }
+
   const posts: BatchPost[] = [];
+  const missingMedia: string[] = [];
   let skipped = 0;
   for (const post of listUnextractedPosts(db)) {
-    const entry = toBatchPost(post, findMediaFiles(mediaDir, post.igMediaId));
+    const mediaPaths = findMediaFiles(mediaDir, post.igMediaId);
+    if (isMissingMedia(post, mediaPaths)) {
+      missingMedia.push(post.igMediaId);
+      continue;
+    }
+    const entry = toBatchPost(post, mediaPaths);
     if (entry) posts.push(entry);
     else skipped++;
   }
@@ -114,5 +153,5 @@ export function writeBatches(
     return path;
   });
 
-  return { batches: paths, posts: posts.length, skipped };
+  return { batches: paths, posts: posts.length, skipped, missingMedia };
 }

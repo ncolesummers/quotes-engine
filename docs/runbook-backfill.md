@@ -22,8 +22,12 @@ bun run extract:batches --size 10  # smaller batches
 
 Writes `data/extractions/todo/batch-NNN.json`, holding the unextracted posts oldest first. Each post
 carries its caption and the **absolute** paths of all its images (every carousel image). Posts with
-neither media nor a caption are skipped. Each run clears `todo/` and rewrites it from the DB, so
-after a partial import, running it again only batches what is still left.
+neither media nor a caption are skipped. Image and carousel posts whose files are missing from
+`data/media/` (e.g. a failed download) are left out and listed as `missingMedia`: re-run
+`sync:instagram`, then batch again. Each run clears `todo/` and rewrites it from the DB, so after a
+partial import, running it again only batches what is still left. It refuses to run while result
+files in `data/extractions/` are waiting to be imported, because batch names restart at
+`batch-001` and new results would overwrite them.
 
 ## 3. Run one Haiku subagent per batch
 
@@ -38,8 +42,9 @@ Run **at most 4–5 subagents at a time**, and start the next batch when one fin
 
 Each subagent writes `data/extractions/batch-NNN.json` (next to `todo/`, which is where
 `import:extractions` reads) and replies with one line, e.g.
-`batch-007: 20 posts, 18 quotes, 2 no_quote`. If a subagent fails or its file is missing, run that
-batch again.
+`batch-007: 20 posts, 18 quotes, 2 no_quote, 0 unreadable`. Posts with an image the agent could not
+read are left out of its results, so they stay unextracted for the next round. If a subagent fails
+or its file is missing, run that batch again.
 
 The prompt text is in [extraction-prompt.md](extraction-prompt.md). That file is generated from
 `src/ingest/extraction/prompt.ts` (`bun run docs:prompt`), and a test checks that it is up to date.
@@ -75,7 +80,7 @@ sqlite3 data/quotes.db
 ```
 
 ```sql
--- Posts still unextracted (should be only the skipped empty posts).
+-- Posts still unextracted (should be only skipped empty, missing-media or unreadable posts).
 SELECT COUNT(*) FROM posts WHERE extracted_at IS NULL;
 
 -- Links by status and method.

@@ -33,8 +33,23 @@ const mediaDir = process.env.MEDIA_DIR ?? DEFAULT_MEDIA_DIR;
 
 const db = openDb();
 try {
-  const { batches, posts, skipped } = writeBatches(db, { mediaDir, todoDir, size });
-  console.log({ batches: batches.length, posts, skipped, todoDir });
+  const { batches, posts, skipped, missingMedia } = writeBatches(db, { mediaDir, todoDir, size });
+  console.log({
+    batches: batches.length,
+    posts,
+    skipped,
+    missingMedia: missingMedia.length,
+    todoDir,
+  });
+  if (missingMedia.length > 0) {
+    console.warn(
+      `Left out ${missingMedia.length} post(s) whose images are not in ${mediaDir}; ` +
+        `re-run sync:instagram, then batch again: ${missingMedia.join(", ")}`,
+    );
+  }
+} catch (err) {
+  console.error(err instanceof Error ? err.message : err);
+  process.exitCode = 1;
 } finally {
   db.close();
 }

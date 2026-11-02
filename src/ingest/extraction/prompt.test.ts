@@ -52,7 +52,13 @@ describe("buildExtractionPrompt", () => {
     expect(prompt).toMatch(/carousel/i);
     expect(prompt).toMatch(/commentary/i);
     expect(prompt).toMatch(/input order/i);
-    expect(prompt).toContain("batch-007: 20 posts, 18 quotes, 2 no_quote");
+    expect(prompt).toContain("batch-007: 20 posts, 18 quotes, 2 no_quote, 0 unreadable");
+  });
+
+  test("tells the agent to leave out posts whose images it cannot read", () => {
+    expect(prompt).toMatch(/cannot (be )?read/i);
+    expect(prompt).toMatch(/leave (the|that) post out/i);
+    expect(prompt).not.toMatch(/exactly one result per input post/i);
   });
 
   test("resolves relative paths to absolute ones", () => {
@@ -80,6 +86,12 @@ describe("outPathForBatch", () => {
     expect(
       outPathForBatch("/repo/data/extractions/todo/batch-003.json", "/repo/data/extractions"),
     ).toBe("/repo/data/extractions/batch-003.json");
+  });
+
+  test("refuses a batch path that is itself the result path", () => {
+    expect(() =>
+      outPathForBatch("/repo/data/extractions/batch-003.json", "/repo/data/extractions"),
+    ).toThrow(/overwrite/);
   });
 });
 

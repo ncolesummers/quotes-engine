@@ -8,6 +8,7 @@
  * where `bun run import:extractions` reads from.
  */
 import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { DEFAULT_EXTRACTIONS_DIR } from "../src/ingest/extraction/batches";
 import {
   buildExtractionPrompt,
@@ -15,7 +16,7 @@ import {
   renderExtractionPromptDoc,
 } from "../src/ingest/extraction/prompt";
 
-const DOC_PATH = "docs/extraction-prompt.md";
+const DOC_PATH = join(import.meta.dir, "../docs/extraction-prompt.md");
 
 const arg = process.argv[2];
 if (arg === "--doc") {
@@ -29,6 +30,11 @@ if (arg === "--doc") {
   process.exit(1);
 } else {
   const extractionsDir = process.env.EXTRACTIONS_DIR ?? DEFAULT_EXTRACTIONS_DIR;
-  const outPath = outPathForBatch(arg, extractionsDir);
-  process.stdout.write(buildExtractionPrompt({ batchPath: arg, outPath }));
+  try {
+    const outPath = outPathForBatch(arg, extractionsDir);
+    process.stdout.write(buildExtractionPrompt({ batchPath: arg, outPath }));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  }
 }

@@ -112,6 +112,7 @@ describe("writeBatches", () => {
       batches: [join(todoDir, "batch-001.json"), join(todoDir, "batch-002.json")],
       posts: 3,
       skipped: 0,
+      missingMedia: [],
     });
     expect(readBatch("batch-001.json")).toEqual({
       posts: [
@@ -172,6 +173,35 @@ describe("writeBatches", () => {
     });
   });
 
+  test("skips image posts whose media files are missing, and reports them", () => {
+    upsertPost(db, { igMediaId: "lost", caption: "#joeabercrombie", mediaType: "IMAGE" });
+    upsertPost(db, {
+      igMediaId: "lostcar",
+      caption: "#theexpanse",
+      mediaType: "CAROUSEL_ALBUM",
+      mediaPath: "lostcar_1.jpg",
+    });
+    upsertPost(db, { igMediaId: "vid", caption: "A quote in the caption.", mediaType: "VIDEO" });
+
+    const summary = writeBatches(db, { mediaDir, todoDir, size: 20 });
+
+    expect(summary.posts).toBe(1);
+    expect(summary.missingMedia).toEqual(["lost", "lostcar"]);
+    expect(
+      readBatch("batch-001.json").posts.map((p: { ig_media_id: string }) => p.ig_media_id),
+    ).toEqual(["vid"]);
+  });
+
+  test("refuses to run while result files are waiting to be imported", () => {
+    mkdirSync(todoDir, { recursive: true });
+    writeFileSync(join(todoDir, "batch-001.json"), "{}");
+    writeFileSync(join(root, "extractions", "batch-001.json"), "{}");
+    upsertPost(db, { igMediaId: "a", caption: "hi" });
+
+    expect(() => writeBatches(db, { mediaDir, todoDir, size: 20 })).toThrow(/import:extractions/);
+    expect(readFileSync(join(todoDir, "batch-001.json"), "utf8")).toBe("{}");
+  });
+
   test("clears todo/ and rewrites it on every run", () => {
     mkdirSync(todoDir, { recursive: true });
     writeFileSync(join(todoDir, "batch-009.json"), "{}");
@@ -185,7 +215,7 @@ describe("writeBatches", () => {
 
   test("leaves an empty todo/ when nothing is left to extract", () => {
     const summary = writeBatches(db, { mediaDir, todoDir, size: 20 });
-    expect(summary).toEqual({ batches: [], posts: 0, skipped: 0 });
+    expect(summary).toEqual({ batches: [], posts: 0, skipped: 0, missingMedia: [] });
     expect(existsSync(todoDir)).toBe(true);
     expect(readdirSync(todoDir)).toEqual([]);
   });
