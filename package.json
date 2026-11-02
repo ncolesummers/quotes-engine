@@ -11,7 +11,8 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "import:extractions": "bun scripts/import-extractions.ts",
-    "dev:seed": "bun scripts/dev-seed.ts"
+    "dev:seed": "bun scripts/dev-seed.ts",
+    "sync:instagram": "bun scripts/sync-instagram.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.105.1",
