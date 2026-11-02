@@ -144,3 +144,36 @@ ORDER BY random() LIMIT 20;
 -- Authors and sources, to catch badly decoded hashtags (e.g. "Joeabercrombie").
 SELECT author, source_title, COUNT(*) FROM quotes GROUP BY 1, 2 ORDER BY 3 DESC;
 ```
+
+## New posts: `bun run extract:new`
+
+For the few posts that arrive each day, steps 2–6 run unattended, without a Claude Code session:
+
+```sh
+bun run extract:new            # 20 posts per batch
+bun run extract:new --size 10
+```
+
+It does nothing (no OCR, no agent) when every post is already extracted. Otherwise it OCRs the
+unextracted posts, writes the classification batches, and runs one headless Haiku agent per batch,
+one at a time, with a 5-minute limit each (`CLASSIFY_TIMEOUT_MS`):
+
+```sh
+claude -p "<classification prompt for the batch>" --model haiku --tools Read,Write \
+  --permission-mode acceptEdits --permission-prompts none --output-format json \
+  --no-session-persistence --strict-mcp-config
+```
+
+Each agent runs in `data/extractions/classifying/`, which holds only a copy of its batch, and writes
+its result there; Write is auto-accepted only inside that directory, and anything needing a
+permission prompt is denied. The result moves to `classified/` once the run is verified (exit 0, no
+error, file written), and is then assembled and imported. A timeout kills the agent's whole process
+group. A batch whose agent exits non-zero, times out, reports an error or writes no result file is
+logged with its stderr; its partial result (if any) goes to `classified/failed/`, and its posts stay
+unextracted for the next run. Results left by an earlier, interrupted run (`classified/*.json` or
+`extractions/*.json`) are assembled and imported first; a result still in `classifying/` was never
+verified, so it goes to `classified/failed/` instead. It prints each batch's time and cost, then a summary, and exits 1 if
+anything failed.
+
+Env: the same `QUOTES_DB_PATH`, `MEDIA_DIR`, `OCR_DIR`, `EXTRACTIONS_DIR` and `OCR_BIN` as above,
+plus `CLAUDE_BIN` (default: `claude` on `PATH`). Relative paths are resolved against the repo root.

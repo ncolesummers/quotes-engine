@@ -16,6 +16,7 @@
     "extract:classify-batches": "bun scripts/classification-batches.ts",
     "extract:classify-prompt": "bun scripts/classification-prompt.ts",
     "extract:assemble": "bun scripts/assemble-extractions.ts",
+    "extract:new": "bun scripts/extract-new.ts",
     "docs:prompt": "bun scripts/extraction-prompt.ts --doc",
     "dev:seed": "bun scripts/dev-seed.ts",
     "sync:instagram": "bun scripts/sync-instagram.ts",
