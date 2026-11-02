@@ -67,6 +67,17 @@ describe("normalizeQuote", () => {
     ],
     ["digits kept", "Rule #1: never lose money", "rule 1 never lose money"],
     ["C# is not a hashtag", "I love C#", "i love c"],
+    ["hashtag right after punctuation", "Know thyself.#wisdom", "know thyself"],
+    ["hashtag right after emoji", "Know thyself \u{1F525}#wisdom", "know thyself"],
+    ["adjacent hashtags", "Know thyself #wisdom#quotes", "know thyself"],
+    ["keycap emoji removed", "Know thyself 1\uFE0F\u20E3", "know thyself"],
+    ["keycap emoji without selector removed", "Know thyself #\u20E3", "know thyself"],
+    ["acute accent used as apostrophe", "Don\u00B4t stop", "dont stop"],
+    [
+      "unspaced dash in all-caps quote is kept",
+      "I THINK\u2014THEREFORE I AM",
+      "i think therefore i am",
+    ],
     ["empty string", "", ""],
     ["only whitespace", "   \n\t ", ""],
     ["only emoji and hashtags", "\u{1F525} #motivation", ""],
@@ -166,6 +177,50 @@ describe("parseAttribution", () => {
       "surrounding whitespace trimmed",
       "  Know thyself  \u2014  Socrates  ",
       { text: "Know thyself", author: "Socrates" },
+    ],
+    [
+      "name particles allowed in author",
+      "Even the darkest night will end \u2014 Victor Hugo, Les Mis\u00E9rables",
+      {
+        text: "Even the darkest night will end",
+        author: "Victor Hugo",
+        source: "Les Mis\u00E9rables",
+      },
+    ],
+    [
+      "lowercase name particle in author",
+      "Be the change \u2014 Ludwig van Beethoven",
+      { text: "Be the change", author: "Ludwig van Beethoven" },
+    ],
+    [
+      "capitalized clause with lowercase words is not an author",
+      "Be patient \u2014 It will come",
+      { text: "Be patient \u2014 It will come" },
+    ],
+    [
+      "unspaced dash between words is not a separator",
+      "I think\u2014Therefore I Am",
+      { text: "I think\u2014Therefore I Am" },
+    ],
+    [
+      "all-caps quote with unspaced dash",
+      "I THINK\u2014THEREFORE I AM",
+      { text: "I THINK\u2014THEREFORE I AM" },
+    ],
+    [
+      "all-caps quote with spaced dash is ambiguous, so kept",
+      "I THINK \u2014 THEREFORE I AM",
+      { text: "I THINK \u2014 THEREFORE I AM" },
+    ],
+    [
+      "all-caps quote with attribution after closing punctuation",
+      "WASTE NO MORE TIME. \u2014 MARCUS AURELIUS",
+      { text: "WASTE NO MORE TIME.", author: "MARCUS AURELIUS" },
+    ],
+    [
+      "all-caps quote with attribution after closing quote",
+      "\u201CKNOW THYSELF\u201D \u2014 SOCRATES",
+      { text: "KNOW THYSELF", author: "SOCRATES" },
     ],
   ];
 
