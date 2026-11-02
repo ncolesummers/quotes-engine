@@ -1,0 +1,92 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { Router } from "wouter";
+import { memoryLocation } from "wouter/memory-location";
+
+export type FetchHandler = (
+  url: URL,
+  init: RequestInit | undefined,
+) => Response | Promise<Response>;
+
+export interface MockedFetch {
+  /** Every request URL, in call order. */
+  calls: URL[];
+  /** Every request's init, in call order (parallel to `calls`). */
+  inits: (RequestInit | undefined)[];
+  /** Calls whose pathname equals `pathname`. */
+  callsTo(pathname: string): URL[];
+  restore(): void;
+}
+
+/** Replace `globalThis.fetch` with `handler`; relative URLs resolve against http://localhost. */
+export function mockFetch(handler: FetchHandler): MockedFetch {
+  const original = globalThis.fetch;
+  const calls: URL[] = [];
+  const inits: (RequestInit | undefined)[] = [];
+  const fake = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const url = new URL(raw, "http://localhost");
+    calls.push(url);
+    inits.push(init);
+    return handler(url, init);
+  };
+  globalThis.fetch = fake as typeof fetch;
+  return {
+    calls,
+    inits,
+    callsTo: (pathname) => calls.filter((u) => u.pathname === pathname),
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+export function json(body: unknown, status = 200): Response {
+  return Response.json(body, { status });
+}
+
+export const emptyStats = {
+  quotes: 0,
+  posts: 0,
+  repostedQuotes: 0,
+  highlights: 0,
+  highlightsBacklog: 0,
+  needsReview: 0,
+};
+
+/** A `/api/quotes` item with sensible defaults. */
+export function quoteItem(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    text: "So it goes.",
+    normalizedText: "so it goes",
+    author: "Kurt Vonnegut",
+    sourceTitle: "Slaughterhouse-Five",
+    notes: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    postingCount: 1,
+    totalLikes: 10,
+    maxLikes: 10,
+    totalComments: 2,
+    lastPostedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** Render `ui` inside a fresh QueryClient (no retries) and an in-memory wouter router. */
+export function renderWithProviders(ui: ReactNode, { path = "/" }: { path?: string } = {}) {
+  const location = memoryLocation({ path, record: true });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+  });
+  const result = render(
+    <QueryClientProvider client={queryClient}>
+      <Router hook={location.hook} searchHook={location.searchHook}>
+        {ui}
+      </Router>
+    </QueryClientProvider>,
+  );
+  return { ...result, location, queryClient };
+}
