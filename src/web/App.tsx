@@ -1,42 +1,26 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react";
+import { Router } from "wouter";
+import { AppShell } from "@/components/AppShell";
+import { createQueryClient } from "@/lib/query";
+import { AppRoutes } from "@/routes";
 
-export function App() {
+/** Shell + routes, without providers (tests wrap this with a memory router and test client). */
+export function AppContent() {
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 px-4 py-12">
-      <header className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Quotes Engine</h1>
-        <p className="text-muted-foreground">
-          Every quote posted to Instagram, plus Apple Books highlights waiting their turn.
-        </p>
-      </header>
+    <AppShell>
+      <AppRoutes />
+    </AppShell>
+  );
+}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Search quotes</CardTitle>
-          <CardDescription>
-            Nothing is synced yet. Search arrives in a later milestone.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex gap-2">
-          <Input placeholder="Search by text or author" aria-label="Search quotes" disabled />
-          <Button type="button" disabled>
-            Search
-          </Button>
-        </CardContent>
-        <CardFooter>
-          <Badge variant="secondary">Scaffold</Badge>
-        </CardFooter>
-      </Card>
-    </main>
+export function App({ queryClient }: { queryClient?: QueryClient } = {}) {
+  const [client] = useState(() => queryClient ?? createQueryClient());
+  return (
+    <QueryClientProvider client={client}>
+      <Router>
+        <AppContent />
+      </Router>
+    </QueryClientProvider>
   );
 }

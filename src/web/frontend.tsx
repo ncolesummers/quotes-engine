@@ -1,7 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "./App";
+import { applyTheme, initialTheme } from "./components/theme";
 import "./styles/globals.css";
+
+applyTheme(initialTheme());
 
 const elem = document.getElementById("root");
 if (!elem) throw new Error("Missing #root element");
