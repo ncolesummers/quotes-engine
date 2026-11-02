@@ -85,7 +85,17 @@ describe("parseClaudeResult", () => {
     });
   });
 
+  test("finds the result message when the CLI prints the whole transcript as an array", () => {
+    const transcript = JSON.stringify([
+      { type: "system", subtype: "init" },
+      { type: "assistant", message: {} },
+      JSON.parse(RESULT_JSON),
+    ]);
+    expect(parseClaudeResult(transcript)).toMatchObject({ isError: false, costUsd: 0.0123 });
+  });
+
   test("returns null for output that isn't a result object", () => {
+    expect(parseClaudeResult("[]")).toBeNull();
     expect(parseClaudeResult("not json")).toBeNull();
     expect(parseClaudeResult("")).toBeNull();
   });

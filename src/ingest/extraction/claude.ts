@@ -46,9 +46,11 @@ export function parseClaudeResult(stdout: string): ClaudeResult | null {
   } catch {
     return null;
   }
-  if (typeof json !== "object" || json === null) return null;
-  const o = json as Record<string, unknown>;
-  if (o.type !== "result") return null;
+  // Some CLI versions print one result object, others the whole transcript as an array.
+  const isResult = (m: unknown): m is Record<string, unknown> =>
+    typeof m === "object" && m !== null && (m as Record<string, unknown>).type === "result";
+  const o = Array.isArray(json) ? json.findLast(isResult) : isResult(json) ? json : undefined;
+  if (!o) return null;
   const num = (v: unknown) => (typeof v === "number" ? v : undefined);
   const out: ClaudeResult = { isError: o.is_error === true };
   if (typeof o.result === "string") out.result = o.result;
