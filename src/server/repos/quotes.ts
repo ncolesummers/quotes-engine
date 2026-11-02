@@ -42,9 +42,9 @@ export type QuoteSort = "likes" | "comments" | "recent" | "postings";
 export interface SearchQuotesParams {
   /** Free-text search over text, author and source (FTS5, prefix match per word). */
   q?: string;
-  /** Case-insensitive substring of the author. */
+  /** Literal substring of the author; case-insensitive for ASCII (SQLite LIKE). */
   author?: string;
-  /** Case-insensitive substring of the source title or a linked highlight's book title. */
+  /** Like `author`, matched against the source title or a linked highlight's book title. */
   book?: string;
   posted?: "yes" | "no";
   minPostings?: number;
@@ -206,6 +206,11 @@ const SORT_SQL: Record<QuoteSort, string> = {
   recent: "lastPostedAt DESC NULLS LAST",
 };
 
+/** LIKE pattern matching `s` as a literal substring (with `ESCAPE '\'`). */
+function likeContains(s: string): string {
+  return `%${s.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
 export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSearchResult {
   const where: string[] = [];
   const having: string[] = [];
@@ -217,14 +222,14 @@ export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSea
     binds.match = match;
   }
   if (params.author) {
-    where.push("q.author LIKE '%' || $author || '%'");
-    binds.author = params.author;
+    where.push("q.author LIKE $author ESCAPE '\\'");
+    binds.author = likeContains(params.author);
   }
   if (params.book) {
-    where.push(`(q.source_title LIKE '%' || $book || '%' OR EXISTS (
+    where.push(`(q.source_title LIKE $book ESCAPE '\\' OR EXISTS (
       SELECT 1 FROM highlights h JOIN books b ON b.id = h.book_id
-      WHERE h.quote_id = q.id AND b.title LIKE '%' || $book || '%'))`);
-    binds.book = params.book;
+      WHERE h.quote_id = q.id AND b.title LIKE $book ESCAPE '\\'))`);
+    binds.book = likeContains(params.book);
   }
   if (params.posted === "yes") having.push("postingCount > 0");
   if (params.posted === "no") having.push("postingCount = 0");

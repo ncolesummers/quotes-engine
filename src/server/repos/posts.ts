@@ -32,6 +32,16 @@ const POST_COLUMNS = `
   metrics_updated_at AS metricsUpdatedAt, extracted_at AS extractedAt`;
 
 /**
+ * Canonical fixed-precision UTC form (`YYYY-MM-DDTHH:mm:ss.sssZ`) of an ISO-8601 timestamp, so
+ * stored timestamps sort chronologically as text. Accepts offsets like Instagram's `+0000`.
+ */
+export function toIsoUtc(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) throw new Error(`Invalid timestamp: ${timestamp}`);
+  return date.toISOString();
+}
+
+/**
  * Insert a post, or update it by `ig_media_id`. Fields left undefined/null keep their stored
  * value. Metrics and extraction state are managed by `recordMetrics` / `markExtracted`.
  */
@@ -56,7 +66,7 @@ export function upsertPost(db: Database, input: PostInput): Post {
       mediaType: input.mediaType ?? null,
       mediaUrl: input.mediaUrl ?? null,
       mediaPath: input.mediaPath ?? null,
-      postedAt: input.postedAt ?? null,
+      postedAt: input.postedAt ? toIsoUtc(input.postedAt) : null,
     });
   if (!post) throw new Error(`upsertPost returned no row for ${input.igMediaId}`);
   return post;
@@ -79,15 +89,16 @@ export function recordMetrics(
   comments: number | null,
   capturedAt: string,
 ): void {
+  const at = toIsoUtc(capturedAt);
   db.transaction(() => {
     db.query(
       `INSERT INTO metric_snapshots (post_id, captured_at, likes, comments)
-       VALUES ($postId, $capturedAt, $likes, $comments)`,
-    ).run({ postId, capturedAt, likes, comments });
+       VALUES ($postId, $at, $likes, $comments)`,
+    ).run({ postId, at, likes, comments });
     db.query(
-      `UPDATE posts SET like_count = $likes, comments_count = $comments, metrics_updated_at = $capturedAt
-       WHERE id = $postId AND (metrics_updated_at IS NULL OR metrics_updated_at <= $capturedAt)`,
-    ).run({ postId, capturedAt, likes, comments });
+      `UPDATE posts SET like_count = $likes, comments_count = $comments, metrics_updated_at = $at
+       WHERE id = $postId AND (metrics_updated_at IS NULL OR metrics_updated_at <= $at)`,
+    ).run({ postId, at, likes, comments });
   })();
 }
 
@@ -103,6 +114,6 @@ export function listUnextractedPosts(db: Database): Post[] {
 export function markExtracted(db: Database, postId: number, extractedAt: string): void {
   db.query("UPDATE posts SET extracted_at = $extractedAt WHERE id = $postId").run({
     postId,
-    extractedAt,
+    extractedAt: toIsoUtc(extractedAt),
   });
 }

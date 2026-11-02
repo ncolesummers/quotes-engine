@@ -193,6 +193,13 @@ describe("searchQuotes", () => {
     expect(search({ author: "seneca" }).items.map((r) => r.id)).toEqual([single]);
   });
 
+  test("author and book filters treat % and _ literally", () => {
+    expect(search({ author: "_" }).items).toEqual([]);
+    expect(search({ book: "%" }).items).toEqual([]);
+    const pct = upsertQuote(db, { text: "Give it all.", sourceTitle: "100% Effort" }).quote.id;
+    expect(search({ book: "0%" }).items.map((r) => r.id)).toEqual([pct]);
+  });
+
   test("search by book matches source title or a linked highlight's book", () => {
     expect(search({ book: "meditations" }).items.map((r) => r.id)).toEqual([reposted]);
 

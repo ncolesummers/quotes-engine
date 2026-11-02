@@ -34,9 +34,24 @@ describe("upsertPost", () => {
     expect(second.permalink).toBe("p1");
     expect(db.query("SELECT COUNT(*) AS n FROM posts").get()).toEqual({ n: 1 });
   });
+
+  test("stores postedAt as canonical UTC ISO-8601 and rejects invalid timestamps", () => {
+    // Instagram's API returns offsets like +0000; mixed formats would break text ordering.
+    const post = upsertPost(db, { igMediaId: "ig1", postedAt: "2026-01-01T02:00:00+0200" });
+    expect(post.postedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(() => upsertPost(db, { igMediaId: "ig2", postedAt: "not a date" })).toThrow();
+  });
 });
 
 describe("recordMetrics", () => {
+  test("compares capturedAt chronologically regardless of input precision", () => {
+    const post = upsertPost(db, { igMediaId: "ig1" });
+    recordMetrics(db, post.id, 15, 3, "2026-01-01T00:00:00.500Z");
+    recordMetrics(db, post.id, 10, 2, "2026-01-01T00:00:00Z");
+    expect(getPost(db, post.id)?.likeCount).toBe(15);
+    expect(getPost(db, post.id)?.metricsUpdatedAt).toBe("2026-01-01T00:00:00.500Z");
+  });
+
   test("updates the post's counts and inserts a snapshot", () => {
     const post = upsertPost(db, { igMediaId: "ig1" });
     recordMetrics(db, post.id, 10, 2, "2026-01-01T00:00:00.000Z");
