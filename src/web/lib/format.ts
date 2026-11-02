@@ -17,6 +17,14 @@ export function formatDate(iso: string | null | undefined): string | null {
   return Number.isNaN(date.getTime()) ? null : dateFormat.format(date);
 }
 
+/** `<Author>, <Title>`, leaving out whichever is missing or blank ("" when both are). */
+export function formatAttribution(book: { title: string | null; author: string | null }): string {
+  return [book.author, book.title]
+    .map((s) => s?.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
 /** `“<text>” — <Author>, <Title>`, leaving out whichever of author and title is missing. */
 export function formatHighlightCopy({
   text,
@@ -25,10 +33,7 @@ export function formatHighlightCopy({
   text: string;
   book: { title: string | null; author: string | null };
 }): string {
-  const attribution = [book.author, book.title]
-    .map((s) => s?.trim())
-    .filter(Boolean)
-    .join(", ");
+  const attribution = formatAttribution(book);
   const quoted = `“${text.trim()}”`;
   return attribution ? `${quoted} — ${attribution}` : quoted;
 }

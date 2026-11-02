@@ -248,6 +248,63 @@ describe("HighlightsPage", () => {
     }
   });
 
+  test("Shuffle re-rolls when the unposted set shrinks between its two requests", async () => {
+    const pickable = highlightItem({ id: 31, text: "Still unposted.", book: walden });
+    let listCalls = 0;
+    fetchMock = mockFetch((url) => {
+      if (url.pathname === "/api/highlights/books") return json({ items: [], total: 0 });
+      listCalls++;
+      // The count says 3, but by the time the random page is fetched only 1 is left.
+      if (listCalls === 1) return json({ items: [pickable], total: 3 });
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      return json({ items: offset === 0 ? [pickable] : [], total: 1 });
+    });
+    const random = spyOn(Math, "random").mockReturnValue(0.99);
+    try {
+      renderWithProviders(<AppRoutes />, { path: "/highlights" });
+      await screen.findByText(/Every highlight has been posted/);
+      fireEvent.click(screen.getByRole("button", { name: /Shuffle/ }));
+
+      const pick = await screen.findByRole("region", { name: "Random pick" });
+      expect(await within(pick).findByText("Still unposted.")).toBeDefined();
+      expect(within(pick).queryByText(/Nothing unposted/)).toBeNull();
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  test("Shuffle says so when nothing unposted matches", async () => {
+    serve([], {});
+    renderWithProviders(<AppRoutes />, { path: "/highlights" });
+    await screen.findByText(/Every highlight has been posted/);
+    fireEvent.click(screen.getByRole("button", { name: /Shuffle/ }));
+    const pick = await screen.findByRole("region", { name: "Random pick" });
+    expect(within(pick).getByText(/Nothing unposted matches/)).toBeDefined();
+    expect(within(pick).queryByRole("button", { name: /Copy/ })).toBeNull();
+  });
+
+  test("a shuffled highlight with only whitespace text offers no Copy", async () => {
+    serve([], { 3: [highlightItem({ id: 41, text: "  \n", book: walden })] });
+    renderWithProviders(<AppRoutes />, { path: "/highlights" });
+    await screen.findByText(/Every highlight has been posted/);
+    fireEvent.click(screen.getByRole("button", { name: /Shuffle/ }));
+    const pick = await screen.findByRole("region", { name: "Random pick" });
+    expect(within(pick).getByText(/Walden/)).toBeDefined();
+    expect(within(pick).queryByRole("button", { name: /Copy/ })).toBeNull();
+  });
+
+  test("changing the search clears a shuffled pick from the old search", async () => {
+    serve();
+    renderWithProviders(<AppRoutes />, { path: "/highlights" });
+    await screen.findByText("You have power over your mind, not outside events.");
+    fireEvent.click(screen.getByRole("button", { name: /Shuffle/ }));
+    await screen.findByRole("region", { name: "Random pick" });
+
+    fireEvent.change(screen.getByLabelText("Search highlights"), { target: { value: "mind" } });
+
+    await waitFor(() => expect(screen.queryByText("Post this next?") === null).toBe(true));
+  });
+
   test("shows an empty state", async () => {
     serve([], {});
     renderWithProviders(<AppRoutes />, { path: "/highlights" });

@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useUrlSearch } from "@/hooks/use-url-search";
-import { formatDate, formatHighlightCopy, formatNumber } from "@/lib/format";
+import { formatAttribution, formatDate, formatHighlightCopy, formatNumber } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
 import { cn } from "@/lib/utils";
 
@@ -216,11 +216,19 @@ function useShuffle(q: string) {
     mutationFn: async (): Promise<Highlight | null> => {
       const filter = { unposted: true, q: q || undefined, limit: 1 };
       const first = await fetchHighlights(filter);
-      if (first.total === 0) return null;
-      const offset = Math.min(first.total - 1, Math.floor(Math.random() * first.total));
-      if (offset === 0) return first.items[0] ?? null;
-      const page = await fetchHighlights({ ...filter, offset });
-      return page.items[0] ?? null;
+      let total = first.total;
+      // Two requests (count, then a random offset): if the set shrank in between, the offset can
+      // land past the end, so re-roll against the newer total rather than report "nothing left".
+      for (let attempt = 0; total > 0 && attempt < 3; attempt++) {
+        const offset = Math.floor(Math.random() * total);
+        const page =
+          attempt === 0 && offset === 0 ? first : await fetchHighlights({ ...filter, offset });
+        const pick = page.items[0];
+        if (pick) return pick;
+        total = page.total;
+      }
+      if (total > 0) throw new Error("the highlights changed while picking; try again");
+      return null;
     },
   });
 }
@@ -236,6 +244,7 @@ function RandomPick({
   onClose: () => void;
   busy: boolean;
 }) {
+  const text = highlight?.text?.trim() ?? "";
   return (
     <section
       aria-label="Random pick"
@@ -250,7 +259,7 @@ function RandomPick({
       {highlight ? (
         <>
           <blockquote className="font-serif text-xl leading-relaxed text-pretty">
-            {highlight.text?.trim()}
+            {text || <span className="text-muted-foreground italic">(No text)</span>}
           </blockquote>
           {highlight.note && (
             <p className="border-l-2 border-border pl-3 text-sm text-muted-foreground italic">
@@ -258,16 +267,14 @@ function RandomPick({
               {highlight.note}
             </p>
           )}
-          <p className="text-sm text-muted-foreground">
-            {[highlight.book.author, highlight.book.title].filter(Boolean).join(", ")}
-          </p>
+          <p className="text-sm text-muted-foreground">{formatAttribution(highlight.book)}</p>
         </>
       ) : (
         <p className="font-serif text-lg italic">Nothing unposted matches — everything’s a pic.</p>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        {highlight?.text && (
-          <CopyButton text={formatHighlightCopy({ text: highlight.text, book: highlight.book })} />
+        {highlight && text && (
+          <CopyButton text={formatHighlightCopy({ text, book: highlight.book })} />
         )}
         <Button variant="outline" size="sm" onClick={onAnother} disabled={busy}>
           <ShuffleIcon aria-hidden className="size-3.5" />
@@ -292,8 +299,10 @@ export function HighlightsPage() {
   const inputId = useId();
   // Groups the reader opened or closed; untouched groups default to "only the first is open".
   const [toggled, setToggled] = useState<Record<number, boolean>>({});
-  // The shuffled highlight (null highlight = nothing left to post); kept while "Another" loads.
-  const [pick, setPick] = useState<{ highlight: Highlight | null } | null>(null);
+  // The shuffled highlight (null highlight = nothing left to post) and the search it was picked
+  // for; kept while "Another" loads, dropped once the search moves on.
+  const [shuffled, setShuffled] = useState<{ highlight: Highlight | null; q: string } | null>(null);
+  const pick = shuffled?.q === q ? shuffled : null;
 
   const filter: HighlightFilter = { unposted: show === "unposted", q: q || undefined };
   const query = useQuery({
@@ -306,7 +315,7 @@ export function HighlightsPage() {
 
   const shuffle = useShuffle(q);
   const runShuffle = () =>
-    shuffle.mutate(undefined, { onSuccess: (highlight) => setPick({ highlight }) });
+    shuffle.mutate(undefined, { onSuccess: (highlight) => setShuffled({ highlight, q }) });
 
   return (
     <div className="flex flex-col gap-8">
@@ -333,7 +342,7 @@ export function HighlightsPage() {
           highlight={pick.highlight}
           busy={shuffle.isPending}
           onAnother={runShuffle}
-          onClose={() => setPick(null)}
+          onClose={() => setShuffled(null)}
         />
       )}
 

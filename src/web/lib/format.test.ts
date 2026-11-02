@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bookHref, formatHighlightCopy } from "./format";
+import { bookHref, formatAttribution, formatHighlightCopy } from "./format";
 
 describe("formatHighlightCopy", () => {
   test("quotes the text and attributes author and title", () => {
@@ -30,5 +30,13 @@ describe("bookHref", () => {
   test("falls back to a books search by title", () => {
     expect(bookHref("Fool's Errand")).toBe("/books?q=Fool's%20Errand");
     expect(bookHref("Dune", null)).toBe("/books?q=Dune");
+  });
+});
+
+describe("formatAttribution", () => {
+  test("joins author and title, leaving out blank parts", () => {
+    expect(formatAttribution({ title: "Walden", author: "Thoreau" })).toBe("Thoreau, Walden");
+    expect(formatAttribution({ title: " ", author: "Thoreau " })).toBe("Thoreau");
+    expect(formatAttribution({ title: null, author: null })).toBe("");
   });
 });
