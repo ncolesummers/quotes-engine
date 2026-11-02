@@ -21,6 +21,7 @@
     "dev:seed": "bun scripts/dev-seed.ts",
     "sync:instagram": "bun scripts/sync-instagram.ts",
     "books:backfill": "bun scripts/books-backfill.ts",
+    "books:rekey": "bun scripts/books-rekey.ts",
     "import:books": "bun scripts/import-books.ts"
   },
   "dependencies": {

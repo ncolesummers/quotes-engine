@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { resolveBook } from "../../server/repos/books";
+import { bookForAsset, resolveBook } from "../../server/repos/books";
 import { bookKey } from "../../server/text/book-key";
 import { normalizeQuote } from "../../server/text/normalize";
 import {
@@ -141,9 +141,8 @@ function keyExists(db: Database, key: string | null): boolean {
 
 /** The `books` row for an Apple Books asset, merged with caption books where possible. */
 function importBook(db: Database, b: AppleBook): { id: number; outcome: BookOutcome } | null {
-  const known = db
-    .query<{ id: number }, { assetId: string }>("SELECT id FROM books WHERE asset_id = $assetId")
-    .get({ assetId: b.assetId });
+  // Also an asset whose book was merged into another (#34): it maps to the kept book.
+  const known = bookForAsset(db, b.assetId);
   if (known) return { id: known.id, outcome: "existing" };
   if (!b.title?.trim()) return null;
 

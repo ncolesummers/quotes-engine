@@ -2,15 +2,17 @@
 const EMOJI_RE = /\p{Extended_Pictographic}|\p{Emoji_Modifier}|‍|️|⃣/gu;
 
 /**
- * One part of a book key: emoji removed, NFKC, smart apostrophes folded to `'`, lowercased,
- * other punctuation turned into spaces, whitespace collapsed. Apostrophes are kept so
- * "Fool's Errand" reads naturally as `fool's errand`. Null when nothing is left.
+ * One part of a book key: emoji removed, NFKC, `&` spelled out as "and", smart apostrophes
+ * folded to `'`, lowercased, other punctuation turned into spaces, whitespace collapsed.
+ * Apostrophes are kept so "Fool's Errand" reads naturally as `fool's errand`. Null when
+ * nothing is left.
  */
 function keyPart(s: string | null | undefined): string | null {
   if (!s) return null;
   const part = s
     .replace(EMOJI_RE, " ")
     .normalize("NFKC")
+    .replace(/&/g, " and ")
     .replace(/[‘’‚‛′`´]/g, "'")
     .toLowerCase()
     .replace(/[^\p{L}\p{M}\p{N}'\s]/gu, " ")

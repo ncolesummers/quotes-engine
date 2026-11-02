@@ -3,7 +3,8 @@ import { realpath, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { BunRequest } from "bun";
 import { z } from "zod";
-import { getBookDetail, listBooks } from "./repos/books";
+import { deleteBook, mergeBooks, updateBook } from "./repos/book-cleanup";
+import { getBook, getBookDetail, listBooks } from "./repos/books";
 import { getQuoteHighlights, listHighlightBooks, listHighlights } from "./repos/highlights";
 import { getQuote, getQuoteDetail, mergeQuotes, searchQuotes, updateQuote } from "./repos/quotes";
 import {
@@ -110,6 +111,11 @@ const positiveInt = z.number().int().positive();
 const text = z.string().trim().max(500).optional();
 const limit = z.coerce.number().int().min(1).max(200).default(50);
 const offset = z.coerce.number().int().min(0).default(0);
+/** `?x=1` / `?x=true` (absent or 0/false = off). */
+const flag = z
+  .enum(["1", "0", "true", "false"])
+  .optional()
+  .transform((v) => v === "1" || v === "true");
 
 const quotesQuery = z.object({
   q: text,
@@ -117,6 +123,7 @@ const quotesQuery = z.object({
   book: text,
   posted: z.enum(["yes", "no"]).optional(),
   minPostings: z.coerce.number().int().min(0).optional(),
+  noBook: flag,
   sort: z.enum(["likes", "comments", "recent", "postings"]).default("recent"),
   limit,
   offset,
@@ -141,10 +148,7 @@ const quotePatch = z
 const mergeBody = z.object({ dropId: positiveInt });
 
 const highlightBooksQuery = z.object({
-  unposted: z
-    .enum(["1", "0", "true", "false"])
-    .optional()
-    .transform((v) => v === "1" || v === "true"),
+  unposted: flag,
   q: text,
 });
 
@@ -158,7 +162,15 @@ const highlightsQuery = highlightBooksQuery.extend({
 const booksQuery = z.object({
   q: text,
   sort: z.enum(["title", "quotes", "posted", "recent"]).default("title"),
+  attention: flag,
 });
+
+const bookPatch = z
+  .strictObject({
+    title: z.string().trim().min(1, "must not be empty").max(500).optional(),
+    author: nullableText.pipe(z.string().max(500).nullable().optional()),
+  })
+  .refine((p) => p.title !== undefined || p.author !== undefined, "No fields to update");
 
 const reviewBody = z.object({ action: z.enum(["confirm", "reject"]) });
 
@@ -180,6 +192,18 @@ function quoteDetail(db: Database, quoteId: number) {
     book: detail.book,
     postings: detail.postings.map((p) => ({ ...p, mediaUrl: mediaUrl(p.mediaPath) })),
     highlights: getQuoteHighlights(db, quoteId),
+  };
+}
+
+function bookDetail(db: Database, bookId: number) {
+  const detail = getBookDetail(db, bookId);
+  if (!detail) throw new HttpError(404, `Book ${bookId} not found`);
+  return {
+    ...detail,
+    entries: detail.entries.map((e) => ({
+      ...e,
+      postings: e.postings.map((p) => ({ ...p, mediaUrl: mediaUrl(p.mediaPath) })),
+    })),
   };
 }
 
@@ -273,17 +297,48 @@ export function createRoutes(
     },
 
     "/api/books/:id": {
-      GET: handle((req: BunRequest<"/api/books/:id">) => {
+      GET: handle((req: BunRequest<"/api/books/:id">) =>
+        Response.json(bookDetail(db, parse(id, req.params.id))),
+      ),
+      PATCH: handle(async (req: BunRequest<"/api/books/:id">) => {
         const bookId = parse(id, req.params.id);
-        const detail = getBookDetail(db, bookId);
-        if (!detail) throw new HttpError(404, `Book ${bookId} not found`);
-        return Response.json({
-          book: detail.book,
-          entries: detail.entries.map((e) => ({
-            ...e,
-            postings: e.postings.map((p) => ({ ...p, mediaUrl: mediaUrl(p.mediaPath) })),
-          })),
-        });
+        const patch = await parseBody(bookPatch, req);
+        const result = updateBook(db, bookId, patch);
+        switch (result.status) {
+          case "not_found":
+            throw new HttpError(404, `Book ${bookId} not found`);
+          case "empty_title":
+            throw new HttpError(400, "title: must contain words");
+          case "conflict":
+            throw new HttpError(409, "Another book has this title and author", {
+              conflictId: result.conflictId,
+            });
+        }
+        return Response.json({ book: result.book });
+      }),
+      DELETE: handle((req: BunRequest<"/api/books/:id">) => {
+        assertSameOriginJson(req);
+        const bookId = parse(id, req.params.id);
+        switch (deleteBook(db, bookId)) {
+          case "not_found":
+            throw new HttpError(404, `Book ${bookId} not found`);
+          case "not_empty":
+            throw new HttpError(409, "Book still has quotes or highlights; merge it instead");
+        }
+        return Response.json({ id: bookId });
+      }),
+    },
+
+    "/api/books/:id/merge": {
+      POST: handle(async (req: BunRequest<"/api/books/:id/merge">) => {
+        const keepId = parse(id, req.params.id);
+        const { dropId } = await parseBody(mergeBody, req);
+        if (dropId === keepId) throw new HttpError(400, "Cannot merge a book into itself");
+        for (const bid of [keepId, dropId]) {
+          if (!getBook(db, bid)) throw new HttpError(404, `Book ${bid} not found`);
+        }
+        mergeBooks(db, keepId, dropId);
+        return Response.json(bookDetail(db, keepId));
       }),
     },
 
