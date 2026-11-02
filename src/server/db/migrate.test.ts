@@ -157,4 +157,23 @@ describe("migrate", () => {
       1,
     );
   });
+
+  test("a foreign key violation already in the database doesn't block later migrations", () => {
+    writeFileSync(
+      join(dir, "0001_a.sql"),
+      `CREATE TABLE parent (id INTEGER PRIMARY KEY);
+       CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent (id));`,
+    );
+    migrate(db, dir);
+    db.run("PRAGMA foreign_keys = OFF");
+    db.run("INSERT INTO child (id, parent_id) VALUES (1, 42)");
+    db.run("PRAGMA foreign_keys = ON");
+
+    writeFileSync(join(dir, "0002_b.sql"), "CREATE TABLE other (id INTEGER PRIMARY KEY);");
+    expect(migrate(db, dir)).toEqual(["0002_b"]);
+
+    writeFileSync(join(dir, "0003_c.sql"), "INSERT INTO child (id, parent_id) VALUES (2, 43);");
+    expect(() => migrate(db, dir)).toThrow(/0003_c.*foreign key/i);
+    expect(db.query("SELECT id FROM child ORDER BY id").all()).toEqual([{ id: 1 }]);
+  });
 });

@@ -365,6 +365,23 @@ describe("book linking", () => {
     expect(bookTitle(again.quote.bookId)).toBe("Meditations");
   });
 
+  test("upsertQuote links an existing quote through its highlight's book first", () => {
+    db.run(
+      "INSERT INTO books (id, asset_id, title, author, source) VALUES (5, 'X', 'Fool’s Errand', 'Robin Hobb', 'apple_books')",
+    );
+    const first = upsertQuote(db, { text: "Hope is a dangerous thing." }).quote;
+    db.run(
+      `INSERT INTO highlights (annotation_uuid, book_id, text, quote_id) VALUES ('u1', 5, 'Hope', ${first.id})`,
+    );
+    const again = upsertQuote(db, {
+      text: "Hope is a dangerous thing.",
+      author: "Robin Hobb",
+      sourceTitle: "Fool's Errand (The Tawny Man, Book 1)",
+    });
+    expect(again.quote.bookId).toBe(5);
+    expect((db.query("SELECT COUNT(*) AS n FROM books").get() as { n: number }).n).toBe(1);
+  });
+
   test("updateQuote relinks on a sourceTitle or author change and unlinks on clear", () => {
     const q = upsertQuote(db, { text: "Words to live by.", sourceTitle: "Dune" }).quote;
     const dune = q.bookId;
@@ -386,6 +403,44 @@ describe("book linking", () => {
     const notes = updateQuote(db, q.id, { notes: "hm" });
     if (notes.status !== "updated") throw new Error(notes.status);
     expect(notes.quote.bookId).toBeNull();
+  });
+
+  test("updateQuote keeps a highlight's book when the source title is edited or cleared", () => {
+    db.run(
+      "INSERT INTO books (id, asset_id, title, author, source) VALUES (5, 'X', 'Fool’s Errand: The Tawny Man', 'Robin Hobb', 'apple_books')",
+    );
+    const q = upsertQuote(db, { text: "Hope is a dangerous thing." }).quote;
+    db.run(
+      `INSERT INTO highlights (annotation_uuid, book_id, text, quote_id) VALUES ('u1', 5, 'Hope', ${q.id})`,
+    );
+    db.run(`UPDATE quotes SET book_id = 5 WHERE id = ${q.id}`);
+
+    const edited = updateQuote(db, q.id, { sourceTitle: "Fool's Errand" });
+    if (edited.status !== "updated") throw new Error(edited.status);
+    expect(edited.quote.bookId).toBe(5);
+    const cleared = updateQuote(db, q.id, { sourceTitle: null });
+    if (cleared.status !== "updated") throw new Error(cleared.status);
+    expect(cleared.quote.bookId).toBe(5);
+    expect((db.query("SELECT COUNT(*) AS n FROM books").get() as { n: number }).n).toBe(1);
+  });
+
+  test("updateQuote removes a caption or manual book it leaves empty", () => {
+    const q = upsertQuote(db, { text: "Words to live by.", sourceTitle: "Fols Errand" }).quote;
+    const typo = q.bookId;
+    const other = upsertQuote(db, { text: "Other words here.", sourceTitle: "Dune" }).quote;
+
+    const fixed = updateQuote(db, q.id, { sourceTitle: "Fool's Errand" });
+    if (fixed.status !== "updated") throw new Error(fixed.status);
+    expect(db.query(`SELECT id FROM books WHERE id = ${typo}`).get()).toBeNull();
+
+    // A book that still has a quote, or one from Apple Books, is kept.
+    db.run(
+      "INSERT INTO books (id, asset_id, title, normalized_key, source) VALUES (9, 'X', 'Apple', 'apple', 'apple_books')",
+    );
+    db.run(`UPDATE quotes SET book_id = 9 WHERE id = ${q.id}`);
+    updateQuote(db, q.id, { sourceTitle: "Dune" });
+    expect(db.query("SELECT id FROM books WHERE id = 9").get()).toEqual({ id: 9 });
+    expect(bookTitle(other.bookId)).toBe("Dune");
   });
 
   test("search rows and quote detail carry the linked book", () => {

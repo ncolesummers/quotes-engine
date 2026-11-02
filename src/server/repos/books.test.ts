@@ -118,6 +118,30 @@ describe("findOrCreateBook", () => {
   });
 });
 
+describe("findOrCreateBook before the backfill", () => {
+  test("reuses an Apple Books record that has no normalized_key yet", () => {
+    db.run(
+      "INSERT INTO books (id, asset_id, title, author, source) VALUES (5, 'X', 'Dune', 'Frank Herbert', 'apple_books')",
+    );
+    const book = findOrCreateBook(db, {
+      title: "DUNE",
+      author: "Frank Herbert",
+      source: "caption",
+    });
+    expect(book?.id).toBe(5);
+    expect(book?.normalizedKey).toBe("dune|frank herbert");
+    expect(countBooks()).toBe(1);
+  });
+
+  test("a title-only lookup reuses an unkeyed Apple Books record", () => {
+    db.run(
+      "INSERT INTO books (id, asset_id, title, author, source) VALUES (5, 'X', 'Dune', 'Frank Herbert', 'apple_books')",
+    );
+    expect(findOrCreateBook(db, { title: "Dune", source: "caption" })?.id).toBe(5);
+    expect(countBooks()).toBe(1);
+  });
+});
+
 describe("listBooks", () => {
   function fixture() {
     const hobb = findOrCreateBook(db, { title: "Fool's Errand", author: "Robin Hobb" });
@@ -331,5 +355,21 @@ describe("backfillBooks", () => {
     expect(bookIdOf(viaTitle.id)).toBe(5);
     expect(bookIdOf(viaHighlight.id)).toBe(5);
     expect(backfillBooks(db)).toEqual({ booksKeyed: 0, booksCreated: 0, quotesLinked: 0 });
+  });
+
+  test("prefers a linked highlight's book over a differently worded source title", () => {
+    db.run(
+      "INSERT INTO books (id, asset_id, title, author, source) VALUES (5, 'X', 'Fool’s Errand', 'Robin Hobb', 'apple_books')",
+    );
+    const q = s.quote({
+      text: "Fear",
+      author: "Robin Hobb",
+      sourceTitle: "Fool's Errand (The Tawny Man, Book 1)",
+    });
+    s.highlight({ bookId: 5, text: "Fear", quoteId: q.id });
+
+    expect(backfillBooks(db)).toEqual({ booksKeyed: 1, booksCreated: 0, quotesLinked: 1 });
+    expect(bookIdOf(q.id)).toBe(5);
+    expect(countBooks()).toBe(1);
   });
 });

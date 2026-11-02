@@ -71,7 +71,7 @@ describe("BookDetailPage", () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Fool's Errand" })).toBeDefined();
     expect(screen.getByText("Robin Hobb")).toBeDefined();
-    expect(screen.getByText("3 quotes · 2 pics · last posted Oct 25, 2026")).toBeDefined();
+    expect(screen.getByText("3 quotes · 2 posted · last posted Oct 25, 2026")).toBeDefined();
     expect(fetchMock?.callsTo("/api/books/1")).toHaveLength(1);
   });
 

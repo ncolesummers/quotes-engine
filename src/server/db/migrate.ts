@@ -64,7 +64,10 @@ export function migrate(db: Database, dir: string | URL = DEFAULT_MIGRATIONS_DIR
 
   // Foreign keys are off while migrations run (SQLite's procedure for table rebuilds: dropping
   // a parent table would otherwise cascade into its children) and checked before each commit.
-  // The pragma is a no-op inside a transaction, so it is toggled around them.
+  // The pragma is a no-op inside a transaction, so it is toggled around them. Violations that
+  // were already in the database are tolerated; a migration may not add any.
+  const fkViolations = () => db.query("PRAGMA foreign_key_check").all().length;
+  let baseline = fkViolations();
   const fkWasOn =
     db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get()?.foreign_keys === 1;
   if (fkWasOn) db.run("PRAGMA foreign_keys = OFF");
@@ -74,10 +77,11 @@ export function migrate(db: Database, dir: string | URL = DEFAULT_MIGRATIONS_DIR
       try {
         db.transaction(() => {
           db.run(m.sql);
-          const violations = db.query("PRAGMA foreign_key_check").all();
-          if (violations.length > 0) {
-            throw new Error(`leaves ${violations.length} foreign key violation(s)`);
+          const violations = fkViolations();
+          if (violations > baseline) {
+            throw new Error(`adds ${violations - baseline} foreign key violation(s)`);
           }
+          baseline = violations;
           record.run(m.version, m.name, new Date().toISOString());
         })();
       } catch (err) {

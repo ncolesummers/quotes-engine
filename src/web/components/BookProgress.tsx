@@ -7,11 +7,14 @@ function plural(n: number, one: string, many: string): string {
   return `${formatNumber(n)} ${n === 1 ? one : many}`;
 }
 
-/** "12 quotes · 7 pics · last posted Oct 25, 2026" (the date only once something is posted). */
+/**
+ * "12 quotes · 7 posted · last posted Oct 25, 2026" (the date only once something is posted).
+ * "posted" counts distinct quotes, not pics: a quote posted three times counts once.
+ */
 export function bookStatsLine(book: BookSummary): string {
   const parts = [
     plural(book.quoteCount, "quote", "quotes"),
-    plural(book.postedCount, "pic", "pics"),
+    `${formatNumber(book.postedCount)} posted`,
   ];
   const last = formatDate(book.lastPostedAt);
   if (last) parts.push(`last posted ${last}`);

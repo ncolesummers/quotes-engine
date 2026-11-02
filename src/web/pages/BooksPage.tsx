@@ -15,7 +15,7 @@ export const BOOK_SEARCH_DEBOUNCE_MS = 250;
 const SORTS: { value: BookSort; label: string }[] = [
   { value: "title", label: "Title" },
   { value: "recent", label: "Recently posted" },
-  { value: "posted", label: "Most pics" },
+  { value: "posted", label: "Most posted" },
   { value: "quotes", label: "Most quotes" },
 ];
 

@@ -133,6 +133,9 @@ function resolveBook(
   if (!key || !titleKey) return null;
 
   return db.transaction(() => {
+    // Apple Books rows copied by migration 0002 have no key until keyed; key them first so a
+    // caption import before `books:backfill` reuses them instead of creating a duplicate.
+    keyUnkeyedBooks(db);
     if (assetId) {
       const byAsset = bookWhere(db, "b.asset_id = $assetId", { assetId });
       if (byAsset) return { book: byAsset, created: false };
@@ -191,6 +194,30 @@ function resolveBook(
  */
 export function findOrCreateBook(db: Database, input: FindOrCreateBookInput): Book | null {
   return resolveBook(db, input)?.book ?? null;
+}
+
+/** The book of the quote's earliest linked Apple Books highlight, or null. */
+export function highlightBookId(db: Database, quoteId: number): number | null {
+  return (
+    db
+      .query<{ bookId: number }, { quoteId: number }>(
+        `SELECT book_id AS bookId FROM highlights WHERE quote_id = $quoteId
+         ORDER BY created_at, id LIMIT 1`,
+      )
+      .get({ quoteId })?.bookId ?? null
+  );
+}
+
+/**
+ * Deletes a caption or manual book that no quote or highlight refers to any more (e.g. one
+ * left behind by a source-title typo fix). Apple Books records are kept.
+ */
+export function deleteBookIfEmpty(db: Database, id: number): void {
+  db.query(
+    `DELETE FROM books WHERE id = $id AND source != 'apple_books'
+       AND NOT EXISTS (SELECT 1 FROM quotes WHERE book_id = $id)
+       AND NOT EXISTS (SELECT 1 FROM highlights WHERE book_id = $id)`,
+  ).run({ id });
 }
 
 const POSTED_QUOTE_SQL = "EXISTS (SELECT 1 FROM post_quotes pq WHERE pq.quote_id = q.id)";
@@ -323,30 +350,56 @@ export function getBookDetail(db: Database, id: number): BookDetail | null {
 }
 
 /**
+ * Gives unkeyed books (Apple Books rows from migration 0002) a `normalized_key`, unless another
+ * book already has it. Returns how many were keyed.
+ */
+function keyUnkeyedBooks(db: Database): number {
+  const unkeyed = db
+    .query<{ id: number; title: string | null; author: string | null }, []>(
+      "SELECT id, title, author FROM books WHERE normalized_key IS NULL ORDER BY id",
+    )
+    .all();
+  let keyed = 0;
+  for (const b of unkeyed) {
+    const key = bookKey(b.title, b.author);
+    if (!key || bookWhere(db, "b.normalized_key = $key", { key })) continue;
+    db.query("UPDATE books SET normalized_key = $key WHERE id = $id").run({ key, id: b.id });
+    keyed++;
+  }
+  return keyed;
+}
+
+/**
  * One-time (and idempotent) linking of existing data:
  * 1. give unkeyed books (from Apple Books) a `normalized_key`, unless another book has it;
- * 2. link quotes without a book by `source_title`/`author` (creating "caption" books);
- * 3. link remaining quotes through a linked highlight's book.
+ * 2. link quotes without a book through a linked highlight's book (the Apple Books record is
+ *    authoritative, while a caption's source title may be worded differently);
+ * 3. link remaining quotes by `source_title`/`author` (creating "caption" books).
  */
 export function backfillBooks(db: Database): BackfillSummary {
   return db.transaction((): BackfillSummary => {
     const summary: BackfillSummary = { booksKeyed: 0, booksCreated: 0, quotesLinked: 0 };
 
-    const unkeyed = db
-      .query<{ id: number; title: string | null; author: string | null }, []>(
-        "SELECT id, title, author FROM books WHERE normalized_key IS NULL ORDER BY id",
-      )
-      .all();
-    for (const b of unkeyed) {
-      const key = bookKey(b.title, b.author);
-      if (!key || bookWhere(db, "b.normalized_key = $key", { key })) continue;
-      db.query("UPDATE books SET normalized_key = $key WHERE id = $id").run({ key, id: b.id });
-      summary.booksKeyed++;
-    }
+    summary.booksKeyed = keyUnkeyedBooks(db);
 
     const setBook = db.query<void, { id: number; bookId: number }>(
       "UPDATE quotes SET book_id = $bookId WHERE id = $id",
     );
+    // (`changes` would also count the FTS trigger's writes, so select first.)
+    const byHighlight = db
+      .query<{ id: number; bookId: number }, []>(
+        `SELECT q.id, (SELECT h.book_id FROM highlights h WHERE h.quote_id = q.id
+           ORDER BY h.created_at, h.id LIMIT 1) AS bookId
+         FROM quotes q
+         WHERE q.book_id IS NULL AND EXISTS (SELECT 1 FROM highlights h WHERE h.quote_id = q.id)
+         ORDER BY q.id`,
+      )
+      .all();
+    for (const q of byHighlight) {
+      setBook.run(q);
+      summary.quotesLinked++;
+    }
+
     const bySource = db
       .query<{ id: number; sourceTitle: string; author: string | null }, []>(
         `SELECT id, source_title AS sourceTitle, author FROM quotes
@@ -363,21 +416,6 @@ export function backfillBooks(db: Database): BackfillSummary {
       setBook.run({ id: q.id, bookId: resolved.book.id });
       summary.quotesLinked++;
       if (resolved.created) summary.booksCreated++;
-    }
-
-    // (`changes` would also count the FTS trigger's writes, so select first.)
-    const byHighlight = db
-      .query<{ id: number; bookId: number }, []>(
-        `SELECT q.id, (SELECT h.book_id FROM highlights h WHERE h.quote_id = q.id
-           ORDER BY h.created_at, h.id LIMIT 1) AS bookId
-         FROM quotes q
-         WHERE q.book_id IS NULL AND EXISTS (SELECT 1 FROM highlights h WHERE h.quote_id = q.id)
-         ORDER BY q.id`,
-      )
-      .all();
-    for (const q of byHighlight) {
-      setBook.run(q);
-      summary.quotesLinked++;
     }
 
     return summary;

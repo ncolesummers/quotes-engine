@@ -46,7 +46,7 @@ function card(title: string): ReturnType<typeof within> {
 }
 
 describe("BooksPage", () => {
-  test("lists each book with quote and pic counts, last posted date and progress", async () => {
+  test("lists each book with quote and posted counts, last posted date and progress", async () => {
     fetchMock = mockFetch(() => json({ items: books }));
     renderWithProviders(<AppRoutes />, { path: "/books" });
 
@@ -58,15 +58,15 @@ describe("BooksPage", () => {
       "/books/1",
     );
     expect(hobb.getByText("Robin Hobb")).toBeDefined();
-    expect(hobb.getByText("3 quotes · 2 pics · last posted Oct 25, 2026")).toBeDefined();
+    expect(hobb.getByText("3 quotes · 2 posted · last posted Oct 25, 2026")).toBeDefined();
     const bar = hobb.getByRole("progressbar");
     expect(bar.getAttribute("aria-valuenow")).toBe("2");
     expect(bar.getAttribute("aria-valuemax")).toBe("4");
     expect(bar.getAttribute("aria-label")).toBe("2 of 4 posted");
 
-    expect(card("Dune").getByText("1 quote · 0 pics")).toBeDefined();
+    expect(card("Dune").getByText("1 quote · 0 posted")).toBeDefined();
     expect(
-      card("Meditations").getByText("1 quote · 1 pic · last posted Mar 5, 2026"),
+      card("Meditations").getByText("1 quote · 1 posted · last posted Mar 5, 2026"),
     ).toBeDefined();
     expect(card("Meditations").getByText("4 unposted highlights")).toBeDefined();
   });

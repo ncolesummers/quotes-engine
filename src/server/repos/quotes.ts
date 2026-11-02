@@ -1,7 +1,15 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { normalizeQuote } from "../text/normalize";
 import { classifyMatch, normalizedSimilarity } from "../text/similarity";
-import { type BookRef, type BookSource, findOrCreateBook, getBook, getBookRef } from "./books";
+import {
+  type BookRef,
+  type BookSource,
+  deleteBookIfEmpty,
+  findOrCreateBook,
+  getBook,
+  getBookRef,
+  highlightBookId,
+} from "./books";
 
 export interface Quote {
   id: number;
@@ -123,12 +131,16 @@ function resolveBookId(
 
 /**
  * Fill a quote's missing author/source/book from `input`; never overwrites existing values.
- * The book is resolved from the quote's (possibly just filled) source title.
+ * The book comes from a linked highlight, else the quote's (possibly just filled) source title.
  */
 function fillMissing(db: Database, quote: Quote, input: QuoteInput): Quote {
   const author = quote.author ?? input.author ?? null;
   const sourceTitle = quote.sourceTitle ?? input.sourceTitle ?? null;
-  const bookId = quote.bookId ?? resolveBookId(db, sourceTitle, author, input.bookSource);
+  // A linked Apple Books highlight names the book more reliably than a caption's wording.
+  const bookId =
+    quote.bookId ??
+    highlightBookId(db, quote.id) ??
+    resolveBookId(db, sourceTitle, author, input.bookSource);
   if (author === quote.author && sourceTitle === quote.sourceTitle && bookId === quote.bookId) {
     return quote;
   }
@@ -376,7 +388,8 @@ const PATCH_COLUMNS = [
 ] as const;
 
 /**
- * The book a quote should link to after `patch`, or undefined to leave it. A new or cleared
+ * The book a quote should link to after `patch`, or undefined to leave it. A quote with a
+ * linked highlight stays on that highlight's book. Otherwise a new or cleared
  * source title re-resolves (or unlinks) the book. An author change alone re-resolves only
  * when the quote has no book yet or its book has no author, since the quote's author may be
  * a character rather than the book's author.
@@ -386,6 +399,9 @@ function relinkedBookId(
   current: Quote,
   patch: QuotePatch,
 ): number | null | undefined {
+  // A linked Apple Books highlight pins the quote to that book whatever the caption says.
+  const fromHighlight = highlightBookId(db, current.id);
+  if (fromHighlight !== null) return fromHighlight === current.bookId ? undefined : fromHighlight;
   const sourceTitle = patch.sourceTitle === undefined ? current.sourceTitle : patch.sourceTitle;
   const author = patch.author === undefined ? current.author : patch.author;
   if (patch.sourceTitle !== undefined) return resolveBookId(db, sourceTitle, author);
@@ -434,6 +450,9 @@ export function updateQuote(db: Database, id: number, patch: QuotePatch): Update
       db.query(`UPDATE quotes SET ${sets.join(", ")}, updated_at = ${NOW_SQL} WHERE id = $id`).run(
         binds,
       );
+    }
+    if (bookId !== undefined && current.bookId !== null && bookId !== current.bookId) {
+      deleteBookIfEmpty(db, current.bookId);
     }
     return { status: "updated", quote: requireQuote(db, id) };
   })();
