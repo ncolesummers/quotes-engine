@@ -122,7 +122,11 @@ function requireBook(db: Database, id: number): Book {
   return book;
 }
 
-function resolveBook(
+/**
+ * `findOrCreateBook`, also reporting whether the row was created. Null when the title is
+ * empty.
+ */
+export function resolveBook(
   db: Database,
   { title: rawTitle, author: rawAuthor, source = "manual", assetId = null }: FindOrCreateBookInput,
 ): { book: Book; created: boolean } | null {
