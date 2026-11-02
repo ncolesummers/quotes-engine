@@ -10,6 +10,8 @@ import {
 /** Query keys in one place so mutations (#14+) can invalidate precisely. */
 export const queryKeys = {
   stats: ["stats"] as const,
+  /** `GET /api/authors`; invalidate after quote edits and merges. */
+  authors: ["authors"] as const,
   quotes: {
     all: ["quotes"] as const,
     /** Prefix of every search query (invalidate after edits and merges). */

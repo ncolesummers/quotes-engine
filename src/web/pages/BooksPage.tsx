@@ -1,11 +1,12 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { SearchIcon } from "lucide-react";
 import { useId, useState } from "react";
-import { Link, useSearchParams } from "wouter";
+import { Link } from "wouter";
 import { type BookIssue, type BookSort, type BookSummary, fetchBooks } from "@/api";
 import { BookProgress, bookStatsLine } from "@/components/BookProgress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useSearchParam } from "@/hooks/use-search-param-state";
 import { useUrlSearch } from "@/hooks/use-url-search";
 import { formatNumber } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
@@ -27,19 +28,8 @@ export const ISSUE_LABELS: Record<BookIssue, string> = {
 
 /** `?attention=1`, replaced in place so toggling adds no history. */
 function useAttentionFilter() {
-  const [params, setParams] = useSearchParams();
-  const attention = params.get("attention") === "1";
-  const setAttention = (on: boolean) =>
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (on) next.set("attention", "1");
-        else next.delete("attention");
-        return next;
-      },
-      { replace: true },
-    );
-  return { attention, setAttention };
+  const [value, setValue] = useSearchParam("attention");
+  return { attention: value === "1", setAttention: (on: boolean) => setValue(on ? "1" : null) };
 }
 
 function IssueBadges({ issues }: { issues: BookIssue[] }) {

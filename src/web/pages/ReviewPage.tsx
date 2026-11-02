@@ -1,5 +1,4 @@
 import { useRef, useState } from "react";
-import { useSearchParams } from "wouter";
 import type { DuplicateQuote, ReviewAction, ReviewLink } from "@/api";
 import { DuplicateReview } from "@/components/DuplicateReview";
 import { ExtractionReview } from "@/components/ExtractionReview";
@@ -8,6 +7,7 @@ import { MergeQuoteDialog } from "@/components/MergeQuoteDialog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useReviewQueue } from "@/hooks/use-review-queue";
+import { useSearchParam } from "@/hooks/use-search-param-state";
 import { useShortcuts } from "@/hooks/use-shortcuts";
 
 type Tab = "extractions" | "duplicates";
@@ -33,18 +33,9 @@ function Count({ n }: { n: number | undefined }) {
 }
 
 export function ReviewPage() {
-  const [params, setParams] = useSearchParams();
-  const tab: Tab = params.get("tab") === "duplicates" ? "duplicates" : "extractions";
-  const setTab = (next: string) =>
-    setParams(
-      (prev) => {
-        const p = new URLSearchParams(prev);
-        if (next === "duplicates") p.set("tab", next);
-        else p.delete("tab");
-        return p;
-      },
-      { replace: true },
-    );
+  const [tabParam, setTabParam] = useSearchParam("tab");
+  const tab: Tab = tabParam === "duplicates" ? "duplicates" : "extractions";
+  const setTab = (next: string) => setTabParam(next === "duplicates" ? next : null);
 
   const { query, resolve, dismiss, merge, editQuote, actionError } = useReviewQueue();
   const links = query.data?.links ?? [];

@@ -116,6 +116,7 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
     queryClient.invalidateQueries({ queryKey: queryKeys.quotes.searches });
     queryClient.invalidateQueries({ queryKey: queryKeys.stats });
     queryClient.invalidateQueries({ queryKey: queryKeys.books.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.authors });
   };
 
   const save = (field: keyof QuotePatch) => async (value: string | null) => {

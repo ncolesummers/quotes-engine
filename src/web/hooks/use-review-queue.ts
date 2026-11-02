@@ -36,6 +36,7 @@ function refreshAfterReview(queryClient: QueryClient, quoteIds: number[]) {
   }
   queryClient.invalidateQueries({ queryKey: queryKeys.quotes.searches });
   queryClient.invalidateQueries({ queryKey: queryKeys.books.all });
+  queryClient.invalidateQueries({ queryKey: queryKeys.authors });
   if (queryClient.isMutating({ mutationKey: REVIEW_MUTATION }) <= 1) {
     queryClient.invalidateQueries({ queryKey: queryKeys.review });
     queryClient.invalidateQueries({ queryKey: queryKeys.stats });

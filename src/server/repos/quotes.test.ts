@@ -199,11 +199,37 @@ describe("searchQuotes", () => {
     expect(search({ author: "seneca" }).items.map((r) => r.id)).toEqual([single]);
   });
 
+  test("authorExact matches the whole name only (a pick from GET /api/authors)", () => {
+    const longer = upsertQuote(db, { text: "Two voices.", author: "Seneca the Younger" }).quote.id;
+    expect(
+      search({ author: "Seneca" })
+        .items.map((r) => r.id)
+        .sort(),
+    ).toEqual([single, longer].sort());
+    expect(search({ authorExact: "Seneca" }).items.map((r) => r.id)).toEqual([single]);
+    expect(search({ authorExact: "seneca" }).total).toBe(0);
+    expect(search({ authorExact: "%" }).total).toBe(0);
+    const padded = upsertQuote(db, { text: "Padded.", author: " Epictetus " }).quote.id;
+    expect(
+      search({ authorExact: "Epictetus" })
+        .items.map((r) => r.id)
+        .sort(),
+    ).toEqual([unposted, padded].sort());
+  });
+
   test("author and book filters treat % and _ literally", () => {
     expect(search({ author: "_" }).items).toEqual([]);
     expect(search({ book: "%" }).items).toEqual([]);
     const pct = upsertQuote(db, { text: "Give it all.", sourceTitle: "100% Effort" }).quote.id;
     expect(search({ book: "0%" }).items.map((r) => r.id)).toEqual([pct]);
+  });
+
+  test("bookId filters by the exact linked book (#14)", () => {
+    const bookId = search().items.find((r) => r.id === reposted)?.bookId;
+    if (!bookId) throw new Error("expected Meditations to be linked to a book");
+    upsertQuote(db, { text: "Meditations on a theme.", sourceTitle: "Meditations II" });
+    expect(search({ bookId }).items.map((r) => r.id)).toEqual([reposted]);
+    expect(search({ bookId: 9999 }).total).toBe(0);
   });
 
   test("search by book matches source title or a linked highlight's book", () => {

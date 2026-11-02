@@ -152,8 +152,13 @@ export type QuoteSort = "likes" | "comments" | "recent" | "postings";
 
 export interface QuoteSearchParams {
   q?: string;
+  /** Substring of the author. */
   author?: string;
+  /** The whole author name (a pick from `GET /api/authors`). */
+  authorExact?: string;
   book?: string;
+  /** Exact linked book (a pick from the books list). */
+  bookId?: number;
   posted?: "yes" | "no";
   minPostings?: number;
   /** Only quotes not linked to a book. */
@@ -161,6 +166,12 @@ export interface QuoteSearchParams {
   sort?: QuoteSort;
   limit?: number;
   offset?: number;
+}
+
+/** One item of `GET /api/authors`. */
+export interface AuthorSummary {
+  name: string;
+  quoteCount: number;
 }
 
 export interface Stats {
@@ -322,6 +333,12 @@ export function fetchQuotes({
   ...params
 }: QuoteSearchParams = {}): Promise<Page<QuoteSearchItem>> {
   return apiGet("/api/quotes", { ...params, noBook: noBook ? 1 : undefined });
+}
+
+/** Distinct quote authors with quote counts, by name (`GET /api/authors`). */
+export async function fetchAuthors(): Promise<AuthorSummary[]> {
+  const { items } = await apiGet<{ items: AuthorSummary[] }>("/api/authors");
+  return items;
 }
 
 export function fetchStats(): Promise<Stats> {

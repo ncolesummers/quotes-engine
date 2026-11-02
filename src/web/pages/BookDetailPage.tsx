@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, MergeIcon, Trash2Icon } from "lucide-react";
 import { useId, useState } from "react";
-import { Link, useLocation, useSearchParams } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   ApiError,
   type BookDetail,
@@ -24,6 +24,7 @@ import { PostedBadge } from "@/components/PostedBadge";
 import { PostThumbnail } from "@/components/PostThumbnail";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useSearchParam } from "@/hooks/use-search-param-state";
 import { formatDate, formatNumber } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
 import { cn } from "@/lib/utils";
@@ -42,19 +43,9 @@ function parseShow(value: string | null): Show {
 
 /** `?show=posted|unposted` (absent = all), replaced in place so toggling adds no history. */
 function useShowFilter() {
-  const [params, setParams] = useSearchParams();
-  const show = parseShow(params.get("show"));
-  const setShow = (next: Show) =>
-    setParams(
-      (prev) => {
-        const p = new URLSearchParams(prev);
-        const value = SHOW_PARAM[next];
-        if (value) p.set("show", value);
-        else p.delete("show");
-        return p;
-      },
-      { replace: true },
-    );
+  const [value, setValue] = useSearchParam("show");
+  const show = parseShow(value);
+  const setShow = (next: Show) => setValue(SHOW_PARAM[next]);
   return { show, setShow };
 }
 
