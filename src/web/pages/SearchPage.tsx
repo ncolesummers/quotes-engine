@@ -36,9 +36,13 @@ function useUrlSearch() {
   const [draft, setDraft] = useState(q);
   const debounced = useDebouncedValue(draft.trim(), SEARCH_DEBOUNCE_MS);
   const lastWritten = useRef(q);
+  const lastDebounced = useRef(debounced);
 
-  // Draft settled -> URL (replace, so each keystroke doesn't add a history entry).
+  // Draft settled -> URL (replace, so each keystroke doesn't add a history entry). Only a new
+  // debounced value writes: when `q` changes from outside, the stale draft must not undo it.
   useEffect(() => {
+    if (debounced === lastDebounced.current) return;
+    lastDebounced.current = debounced;
     if (debounced === q) return;
     lastWritten.current = debounced;
     setParams(

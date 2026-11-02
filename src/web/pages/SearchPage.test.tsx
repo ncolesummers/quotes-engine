@@ -55,6 +55,19 @@ describe("SearchPage", () => {
     });
   });
 
+  test("an external URL change (e.g. clicking Quotes) is not undone by the draft", async () => {
+    fetchMock = mockFetch(() => json({ items: [], total: 0 }));
+    const { location } = renderWithProviders(<SearchPage />, { path: "/?q=grief" });
+    const input = screen.getByRole("searchbox", { name: /search quotes/i }) as HTMLInputElement;
+    await sleep(300);
+
+    act(() => location.navigate("/"));
+    await sleep(400);
+
+    expect(location.history.at(-1)).toBe("/");
+    expect(input.value).toBe("");
+  });
+
   test('a result with 2 postings shows "Posted 2×", highlighted', async () => {
     fetchMock = mockFetch(() =>
       json({

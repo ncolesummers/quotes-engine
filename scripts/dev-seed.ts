@@ -4,16 +4,39 @@
  * Usage: QUOTES_DB_PATH=/tmp/quotes-dev.db bun scripts/dev-seed.ts
  *        QUOTES_DB_PATH=/tmp/quotes-dev.db bun run dev
  *
- * Refuses to run without an explicit QUOTES_DB_PATH so it never touches data/quotes.db.
+ * Refuses to run without an explicit QUOTES_DB_PATH, or with one inside data/, so it never
+ * touches the real catalog.
  */
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { openDb } from "../src/server/db/index";
 import { recordMetrics, upsertPost } from "../src/server/repos/posts";
 import { linkPostQuote, upsertQuote } from "../src/server/repos/quotes";
 
-const path = process.env.QUOTES_DB_PATH;
-if (!path || path.startsWith("data/")) {
-  console.error("Set QUOTES_DB_PATH to a scratch file (not under data/).");
-  process.exit(1);
+/** Canonical form of `path`: symlinks resolved on the deepest ancestor that exists. */
+function canonical(path: string): string {
+  let existing = path;
+  while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
+  const real = existsSync(existing) ? realpathSync(existing) : existing;
+  return resolve(real, relative(existing, path));
+}
+
+function isInside(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/** True when `path` is set and resolves (from `cwd`, through symlinks) outside `dataDir`. */
+export function isSafeSeedPath(
+  path: string | undefined,
+  {
+    cwd = process.cwd(),
+    dataDir = resolve(import.meta.dir, "../data"),
+  }: { cwd?: string; dataDir?: string } = {},
+): path is string {
+  if (!path || path === ":memory:") return false;
+  const target = canonical(resolve(cwd, path));
+  return ![resolve(cwd, "data"), dataDir].some((dir) => isInside(target, canonical(dir)));
 }
 
 interface SeedQuote {
@@ -64,20 +87,37 @@ const QUOTES: SeedQuote[] = [
   },
 ];
 
-const db = openDb(path);
-let seq = 0;
-for (const q of QUOTES) {
-  const { quote } = upsertQuote(db, { text: q.text, author: q.author, sourceTitle: q.sourceTitle });
-  for (const [postedAt, likes, comments] of q.postings) {
-    const post = upsertPost(db, {
-      igMediaId: `dev-${quote.id}-${++seq}`,
-      permalink: null,
-      caption: q.text,
-      postedAt,
-    });
-    recordMetrics(db, post.id, likes, comments, postedAt);
-    linkPostQuote(db, post.id, quote.id, { method: "caption", confidence: 1, status: "confirmed" });
+function main(): void {
+  const path = process.env.QUOTES_DB_PATH;
+  if (!isSafeSeedPath(path)) {
+    console.error("Set QUOTES_DB_PATH to a scratch file outside data/.");
+    process.exit(1);
   }
+  const db = openDb(path);
+  let seq = 0;
+  for (const q of QUOTES) {
+    const { quote } = upsertQuote(db, {
+      text: q.text,
+      author: q.author,
+      sourceTitle: q.sourceTitle,
+    });
+    for (const [postedAt, likes, comments] of q.postings) {
+      const post = upsertPost(db, {
+        igMediaId: `dev-${quote.id}-${++seq}`,
+        permalink: null,
+        caption: q.text,
+        postedAt,
+      });
+      recordMetrics(db, post.id, likes, comments, postedAt);
+      linkPostQuote(db, post.id, quote.id, {
+        method: "caption",
+        confidence: 1,
+        status: "confirmed",
+      });
+    }
+  }
+  db.close();
+  console.log(`Seeded ${QUOTES.length} quotes into ${path}`);
 }
-db.close();
-console.log(`Seeded ${QUOTES.length} quotes into ${path}`);
+
+if (import.meta.main) main();
