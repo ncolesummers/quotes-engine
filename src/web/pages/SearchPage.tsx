@@ -1,59 +1,102 @@
 import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 import { SearchIcon } from "lucide-react";
 import { useId } from "react";
-import { useSearchParams } from "wouter";
 import { fetchQuotes, type QuoteSort } from "@/api";
 import { QuoteCard } from "@/components/QuoteCard";
+import {
+  bookLabel,
+  type FilterChip,
+  FilterChips,
+  FilterControls,
+  MobileFilters,
+  useBookOptions,
+} from "@/components/SearchFilters";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useSearchParamState } from "@/hooks/use-search-param-state";
 import { useUrlSearch } from "@/hooks/use-url-search";
 import { formatNumber } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
+import {
+  activeFilterCount,
+  CLEAR_FILTERS,
+  filterPatch,
+  parseQuoteFilters,
+  type QuoteFilters,
+  SORTS,
+  toQuoteSearchParams,
+} from "@/lib/quote-filters";
 
 export const SEARCH_DEBOUNCE_MS = 250;
 export const PAGE_SIZE = 20;
 
-const SORTS: { value: QuoteSort; label: string }[] = [
-  { value: "recent", label: "Recently posted" },
-  { value: "postings", label: "Most reposted" },
-  { value: "likes", label: "Most liked" },
-  { value: "comments", label: "Most discussed" },
-];
-
-function parseSort(value: string | null): QuoteSort {
-  return SORTS.some((s) => s.value === value) ? (value as QuoteSort) : "recent";
+/** `?q=` (see `useUrlSearch`) plus the filters and sort of `@/lib/quote-filters`. */
+function useQuoteSearch() {
+  const [params, patch] = useSearchParamState();
+  const filters = parseQuoteFilters(params);
+  const { q, draft, setDraft } = useUrlSearch(SEARCH_DEBOUNCE_MS);
+  const setFilters = (change: Partial<QuoteFilters>) => patch(filterPatch(change));
+  const clearFilters = () => patch(CLEAR_FILTERS);
+  return { q, filters, draft, setDraft, setFilters, clearFilters };
 }
 
-/** `?q=` (see `useUrlSearch`), `?sort=` and `?nobook=1` drive the search. */
-function useQuoteSearch() {
-  const [params, setParams] = useSearchParams();
-  const sort = parseSort(params.get("sort"));
-  const noBook = params.get("nobook") === "1";
-  const { q, draft, setDraft } = useUrlSearch(SEARCH_DEBOUNCE_MS);
+const POSTED_LABEL = { yes: "Posted", no: "Never posted" } as const;
 
-  const setNoBook = (value: boolean) =>
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (value) next.set("nobook", "1");
-        else next.delete("nobook");
-        return next;
-      },
-      { replace: true },
-    );
-
-  const setSort = (value: QuoteSort) =>
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (value === "recent") next.delete("sort");
-        else next.set("sort", value);
-        return next;
-      },
-      { replace: true },
-    );
-
-  return { q, sort, noBook, draft, setDraft, setSort, setNoBook };
+/** The active filters as chips; `bookTitle` names the picked book once the list has loaded. */
+function filterChips(
+  f: QuoteFilters,
+  bookTitle: string | null,
+  set: (change: Partial<QuoteFilters>) => void,
+): FilterChip[] {
+  const chips: FilterChip[] = [];
+  if (f.author !== null) {
+    chips.push({
+      key: "author",
+      kind: "Author",
+      label: f.author,
+      remove: () => set({ author: null }),
+    });
+  }
+  if (f.bookId !== null) {
+    chips.push({
+      key: "book",
+      kind: "Book",
+      label: bookTitle ?? "…",
+      remove: () => set({ bookId: null }),
+    });
+  }
+  if (f.noBook) {
+    chips.push({
+      key: "nobook",
+      kind: "Book",
+      label: "No book",
+      remove: () => set({ noBook: false }),
+    });
+  }
+  if (f.posted !== "any") {
+    chips.push({
+      key: "posted",
+      kind: "Posted",
+      label: POSTED_LABEL[f.posted],
+      remove: () => set({ posted: "any" }),
+    });
+  }
+  if (f.reposted) {
+    chips.push({
+      key: "reposted",
+      kind: "Postings",
+      label: "Reposted",
+      remove: () => set({ reposted: false }),
+    });
+  }
+  return chips;
 }
 
 function ResultSkeleton() {
@@ -67,14 +110,23 @@ function ResultSkeleton() {
 }
 
 export function SearchPage() {
-  const { q, sort, noBook, draft, setDraft, setSort, setNoBook } = useQuoteSearch();
+  const { q, filters, draft, setDraft, setFilters, clearFilters } = useQuoteSearch();
   const inputId = useId();
   const sortId = useId();
+  const books = useBookOptions(filters.bookId !== null);
+  const pickedBook =
+    filters.bookId === null ? null : books.data?.find((b) => b.id === filters.bookId);
+  const bookTitle =
+    filters.bookId === null || books.isPending
+      ? null
+      : bookLabel(pickedBook ?? undefined, filters.bookId);
+  const chips = filterChips(filters, bookTitle, setFilters);
+  const filtered = chips.length > 0;
+  const search = { q: q || undefined, ...toQuoteSearchParams(filters), limit: PAGE_SIZE };
 
   const query = useInfiniteQuery({
-    queryKey: queryKeys.quotes.search({ q, sort, noBook, limit: PAGE_SIZE }),
-    queryFn: ({ pageParam }) =>
-      fetchQuotes({ q: q || undefined, sort, noBook, limit: PAGE_SIZE, offset: pageParam }),
+    queryKey: queryKeys.quotes.search(search),
+    queryFn: ({ pageParam }) => fetchQuotes({ ...search, offset: pageParam }),
     initialPageParam: 0,
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((n, p) => n + p.items.length, 0);
@@ -85,6 +137,7 @@ export function SearchPage() {
 
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   const total = query.data?.pages[0]?.total ?? 0;
+  const noun = total === 1 ? "quote" : "quotes";
 
   return (
     <div className="flex flex-col gap-8">
@@ -110,41 +163,48 @@ export function SearchPage() {
           />
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-          <p aria-live="polite">
-            {query.isSuccess &&
-              (q
-                ? `${formatNumber(total)} ${total === 1 ? "match" : "matches"} for “${q}”`
-                : `${formatNumber(total)} ${total === 1 ? "quote" : "quotes"} ${
-                    noBook ? "without a book" : "in the archive"
-                  }`)}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant={noBook ? "default" : "outline"}
-              size="sm"
-              aria-pressed={noBook}
-              onClick={() => setNoBook(!noBook)}
-              title="Quotes not linked to any book"
-              className="h-8"
-            >
-              No book
-            </Button>
+        <div className="flex items-start justify-between gap-3 text-sm">
+          <MobileFilters
+            filters={filters}
+            activeCount={activeFilterCount(filters)}
+            onChange={setFilters}
+          />
+          <FilterControls filters={filters} onChange={setFilters} className="hidden sm:flex" />
+          <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
             <label htmlFor={sortId}>Sort</label>
-            <select
-              id={sortId}
-              value={sort}
-              onChange={(e) => setSort(e.target.value as QuoteSort)}
-              className="h-8 rounded-md border border-input bg-card px-2 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            <Select
+              value={filters.sort}
+              onValueChange={(v) => setFilters({ sort: v as QuoteSort })}
             >
-              {SORTS.map((s) => (
-                <option key={s.value} value={s.value}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger
+                id={sortId}
+                size="sm"
+                aria-label="Sort"
+                className="bg-card text-foreground"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                {SORTS.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
+
+        <FilterChips chips={chips} onClear={clearFilters} />
+
+        <p aria-live="polite" className="text-sm text-muted-foreground">
+          {query.isSuccess &&
+            (q
+              ? `${formatNumber(total)} ${total === 1 ? "match" : "matches"} for “${q}”`
+              : filtered
+                ? `${formatNumber(total)} ${noun} match these filters`
+                : `${formatNumber(total)} ${noun} in the archive`)}
+        </p>
       </section>
 
       {query.isPending ? (
@@ -172,13 +232,24 @@ export function SearchPage() {
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-dashed px-6 py-14 text-center">
           <p className="font-serif text-xl italic">
-            {q ? `No quotes match “${q}”.` : "The archive is empty."}
+            {filtered
+              ? "No quotes match these filters."
+              : q
+                ? `No quotes match “${q}”.`
+                : "The archive is empty."}
           </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            {q
-              ? "Try fewer words, or search by author or book."
-              : "Run a sync to bring in your Instagram posts."}
+            {filtered
+              ? "Loosen or remove a filter to see more."
+              : q
+                ? "Try fewer words, or search by author or book."
+                : "Run a sync to bring in your Instagram posts."}
           </p>
+          {filtered && (
+            <Button variant="outline" size="sm" className="mt-4" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          )}
         </div>
       ) : (
         <>
