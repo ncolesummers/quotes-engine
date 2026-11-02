@@ -199,96 +199,98 @@ function quoteCandidatesByBook(db: Database): Map<number, QuoteCandidate[]> {
  * match of four or more words links across books). Existing links are kept. Idempotent.
  */
 export function importAppleBooks(db: Database, data: AppleBooksData): ImportBooksSummary {
-  return db.transaction((): ImportBooksSummary => {
-    const summary: ImportBooksSummary = {
-      books: { created: 0, merged: 0, existing: 0 },
-      highlights: { new: 0, updated: 0, unchanged: 0, skipped: 0 },
-      linked: { exact: 0, contained: 0, same: 0, likely: 0 },
-    };
+  return db
+    .transaction((): ImportBooksSummary => {
+      const summary: ImportBooksSummary = {
+        books: { created: 0, merged: 0, existing: 0 },
+        highlights: { new: 0, updated: 0, unchanged: 0, skipped: 0 },
+        linked: { exact: 0, contained: 0, same: 0, likely: 0 },
+      };
 
-    const bookIds = new Map<string, number>();
-    for (const b of data.books) {
-      if (bookIds.has(b.assetId)) continue;
-      const imported = importBook(db, b);
-      if (!imported) continue;
-      bookIds.set(b.assetId, imported.id);
-      summary.books[imported.outcome]++;
-    }
+      const bookIds = new Map<string, number>();
+      for (const b of data.books) {
+        if (bookIds.has(b.assetId)) continue;
+        const imported = importBook(db, b);
+        if (!imported) continue;
+        bookIds.set(b.assetId, imported.id);
+        summary.books[imported.outcome]++;
+      }
 
-    const candidates = quoteCandidatesByBook(db);
-    const findStored = db.query<StoredHighlight, { uuid: string }>(
-      `SELECT id, book_id AS bookId, text, note, location, created_at AS createdAt,
+      const candidates = quoteCandidatesByBook(db);
+      const findStored = db.query<StoredHighlight, { uuid: string }>(
+        `SELECT id, book_id AS bookId, text, note, location, created_at AS createdAt,
          quote_id AS quoteId
        FROM highlights WHERE annotation_uuid = $uuid`,
-    );
-    const insert = db.query<{ id: number }, Record<string, string | number | null>>(
-      `INSERT INTO highlights (annotation_uuid, book_id, text, note, location, created_at)
+      );
+      const insert = db.query<{ id: number }, Record<string, string | number | null>>(
+        `INSERT INTO highlights (annotation_uuid, book_id, text, note, location, created_at)
        VALUES ($uuid, $bookId, $text, $note, $location, $createdAt) RETURNING id`,
-    );
-    const update = db.query(
-      `UPDATE highlights SET book_id = $bookId, text = $text, note = $note,
+      );
+      const update = db.query(
+        `UPDATE highlights SET book_id = $bookId, text = $text, note = $note,
          location = $location, created_at = $createdAt
        WHERE id = $id`,
-    );
-    const exactQuote = db.query<{ id: number }, { normalized: string }>(
-      "SELECT id FROM quotes WHERE normalized_text = $normalized",
-    );
-    const setQuote = db.query("UPDATE highlights SET quote_id = $quoteId WHERE id = $id");
-    // As in `fillMissing`: a linked highlight names the quote's book when it has none.
-    const fillQuoteBook = db.query(
-      "UPDATE quotes SET book_id = $bookId WHERE id = $quoteId AND book_id IS NULL",
-    );
-
-    const link = (id: number, h: AppleHighlight, bookId: number) => {
-      const normalized = normalizeQuote(h.text);
-      if (!normalized) return;
-      // Across books, a short line ("so it goes") is too common to be the same quote.
-      const exact =
-        wordCount(normalized) >= MIN_CONTAINED_WORDS ? exactQuote.get({ normalized }) : null;
-      const match = exact
-        ? { quoteId: exact.id, method: "exact" as const }
-        : matchQuote(normalized, candidates.get(bookId) ?? []);
-      if (!match) return;
-      setQuote.run({ quoteId: match.quoteId, id });
-      fillQuoteBook.run({ quoteId: match.quoteId, bookId });
-      summary.linked[match.method]++;
-    };
-
-    for (const h of data.highlights) {
-      const bookId = bookIds.get(h.assetId);
-      if (bookId === undefined) {
-        summary.highlights.skipped++;
-        continue;
-      }
-      const fields = {
-        bookId,
-        text: h.text,
-        note: h.note,
-        location: h.location,
-        createdAt: h.createdAt,
-      };
-      const stored = findStored.get({ uuid: h.annotationUuid });
-      if (!stored) {
-        const row = insert.get({ uuid: h.annotationUuid, ...fields });
-        if (!row) throw new Error("Highlight insert returned no row");
-        summary.highlights.new++;
-        link(row.id, h, bookId);
-        continue;
-      }
-      const changed = (Object.keys(fields) as (keyof typeof fields)[]).some(
-        (k) => stored[k] !== fields[k],
       );
-      if (changed) {
-        update.run({ id: stored.id, ...fields });
-        summary.highlights.updated++;
-      } else {
-        summary.highlights.unchanged++;
-      }
-      if (stored.quoteId === null) link(stored.id, h, bookId);
-    }
+      const exactQuote = db.query<{ id: number }, { normalized: string }>(
+        "SELECT id FROM quotes WHERE normalized_text = $normalized",
+      );
+      const setQuote = db.query("UPDATE highlights SET quote_id = $quoteId WHERE id = $id");
+      // As in `fillMissing`: a linked highlight names the quote's book when it has none.
+      const fillQuoteBook = db.query(
+        "UPDATE quotes SET book_id = $bookId WHERE id = $quoteId AND book_id IS NULL",
+      );
 
-    return summary;
-  })();
+      const link = (id: number, h: AppleHighlight, bookId: number) => {
+        const normalized = normalizeQuote(h.text);
+        if (!normalized) return;
+        // Across books, a short line ("so it goes") is too common to be the same quote.
+        const exact =
+          wordCount(normalized) >= MIN_CONTAINED_WORDS ? exactQuote.get({ normalized }) : null;
+        const match = exact
+          ? { quoteId: exact.id, method: "exact" as const }
+          : matchQuote(normalized, candidates.get(bookId) ?? []);
+        if (!match) return;
+        setQuote.run({ quoteId: match.quoteId, id });
+        fillQuoteBook.run({ quoteId: match.quoteId, bookId });
+        summary.linked[match.method]++;
+      };
+
+      for (const h of data.highlights) {
+        const bookId = bookIds.get(h.assetId);
+        if (bookId === undefined) {
+          summary.highlights.skipped++;
+          continue;
+        }
+        const fields = {
+          bookId,
+          text: h.text,
+          note: h.note,
+          location: h.location,
+          createdAt: h.createdAt,
+        };
+        const stored = findStored.get({ uuid: h.annotationUuid });
+        if (!stored) {
+          const row = insert.get({ uuid: h.annotationUuid, ...fields });
+          if (!row) throw new Error("Highlight insert returned no row");
+          summary.highlights.new++;
+          link(row.id, h, bookId);
+          continue;
+        }
+        const changed = (Object.keys(fields) as (keyof typeof fields)[]).some(
+          (k) => stored[k] !== fields[k],
+        );
+        if (changed) {
+          update.run({ id: stored.id, ...fields });
+          summary.highlights.updated++;
+        } else {
+          summary.highlights.unchanged++;
+        }
+        if (stored.quoteId === null) link(stored.id, h, bookId);
+      }
+
+      return summary;
+    })
+    .immediate();
 }
 
 export function formatImportSummary({ books, highlights, linked }: ImportBooksSummary): string {

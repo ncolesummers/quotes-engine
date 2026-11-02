@@ -1,12 +1,21 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   agentStatus,
   type CommandResult,
   DEFAULT_TEMPLATE_PATH,
   installAgent,
+  isLinkedWorktree,
   LABEL,
   type PlistVars,
   plistVars,
@@ -40,8 +49,19 @@ describe("resolveBunPath", () => {
     ).toBe("/Users/me/.bun/bin/bun");
   });
 
-  test("falls back to the running bun", () => {
-    expect(resolveBunPath({ ...base, env: {}, exists: () => false })).toBe(base.execPath);
+  test("falls back to the running bun when it is a real install", () => {
+    expect(
+      resolveBunPath({
+        ...base,
+        execPath: "/opt/homebrew/bin/bun",
+        env: {},
+        exists: () => false,
+      }),
+    ).toBe("/opt/homebrew/bin/bun");
+  });
+
+  test("refuses to bake in a project-local node_modules bun; asks for BUN_BIN", () => {
+    expect(() => resolveBunPath({ ...base, env: {}, exists: () => false })).toThrow(/BUN_BIN/);
   });
 });
 
@@ -64,6 +84,12 @@ describe("plistVars", () => {
     );
     expect(v.logDir).toBe("/r/data/logs");
     expect(v.label).toBe(LABEL);
+  });
+
+  test("logs follow DATA_DIR, like scripts/sync.ts does", () => {
+    const base = { home: "/h", repoDir: "/r", bunPath: "/h/.bun/bin/bun", claudeBin: "/c" };
+    expect(plistVars({ ...base, dataDir: "elsewhere" }).logDir).toBe("/r/elsewhere/logs");
+    expect(plistVars({ ...base, dataDir: "/abs/data" }).logDir).toBe("/abs/data/logs");
   });
 });
 
@@ -114,6 +140,7 @@ describe("launchctl wrappers (fake runner)", () => {
   let responses: Record<string, CommandResult>;
 
   const ok: CommandResult = { exitCode: 0, stdout: "", stderr: "" };
+  const sleep = () => {};
   const run = (cmd: string[]): CommandResult => {
     calls.push(cmd);
     return responses[cmd.slice(0, 2).join(" ")] ?? ok;
@@ -132,36 +159,66 @@ describe("launchctl wrappers (fake runner)", () => {
     installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run });
     expect(readFileSync(plistPath, "utf8")).toBe("<plist/>");
     expect(calls).toEqual([
-      ["plutil", "-lint", plistPath],
+      ["plutil", "-lint", `${plistPath}.tmp`],
       ["launchctl", "bootout", `gui/501/${LABEL}`],
       ["launchctl", "bootstrap", "gui/501", plistPath],
     ]);
   });
 
   test("install is idempotent: a second install boots out the loaded job first", () => {
-    installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run });
-    installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run });
+    responses["launchctl print"] = { exitCode: 113, stdout: "", stderr: "Could not find service" };
+    installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run, sleep });
+    installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run, sleep });
     expect(calls.filter((c) => c[1] === "bootout")).toHaveLength(2);
     expect(calls.filter((c) => c[1] === "bootstrap")).toHaveLength(2);
   });
 
-  test("install stops before launchctl when plutil -lint fails", () => {
+  test("install stops before launchctl when plutil -lint fails, keeping the old plist", () => {
+    mkdirSync(dirname(plistPath), { recursive: true });
+    writeFileSync(plistPath, "<good/>");
     responses["plutil -lint"] = { exitCode: 1, stdout: "bad plist", stderr: "" };
     expect(() =>
       installAgent({ plistPath, contents: "<plist", uid: 501, label: LABEL, run }),
     ).toThrow(/plutil/);
     expect(calls.some((c) => c[0] === "launchctl")).toBe(false);
+    expect(readFileSync(plistPath, "utf8")).toBe("<good/>");
+    expect(readdirSync(dirname(plistPath))).toEqual([`${LABEL}.plist`]);
+  });
+
+  test("after a successful bootout, install waits until the job is gone before bootstrapping", () => {
+    let prints = 0;
+    const runWithTeardown = (cmd: string[]): CommandResult => {
+      calls.push(cmd);
+      if (cmd[1] === "print") {
+        prints++;
+        return prints < 3 ? ok : { exitCode: 113, stdout: "", stderr: "Could not find service" };
+      }
+      return ok;
+    };
+    const naps: number[] = [];
+    installAgent({
+      plistPath,
+      contents: "<plist/>",
+      uid: 501,
+      label: LABEL,
+      run: runWithTeardown,
+      sleep: (ms) => naps.push(ms),
+    });
+    const verbs = calls.filter((c) => c[0] === "launchctl").map((c) => c[1]);
+    expect(verbs).toEqual(["bootout", "print", "print", "print", "bootstrap"]);
+    expect(naps.length).toBe(2);
   });
 
   test("install throws when bootstrap fails", () => {
     responses["launchctl bootstrap"] = { exitCode: 5, stdout: "", stderr: "Input/output error" };
     expect(() =>
-      installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run }),
+      installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run, sleep }),
     ).toThrow(/Input\/output error/);
   });
 
   test("uninstall boots out the job and removes the plist; safe when not installed", () => {
-    installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run });
+    responses["launchctl print"] = { exitCode: 113, stdout: "", stderr: "Could not find service" };
+    installAgent({ plistPath, contents: "<plist/>", uid: 501, label: LABEL, run, sleep });
     calls = [];
     uninstallAgent({ plistPath, uid: 501, label: LABEL, run });
     expect(calls).toEqual([["launchctl", "bootout", `gui/501/${LABEL}`]]);
@@ -184,5 +241,23 @@ describe("launchctl wrappers (fake runner)", () => {
       loaded: false,
       output: "Could not find service",
     });
+  });
+});
+
+describe("isLinkedWorktree", () => {
+  test("true when .git is a file (a `git worktree` checkout), false for the main checkout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "qe-wt-"));
+    try {
+      const main = join(dir, "main");
+      const wt = join(dir, "wt");
+      mkdirSync(join(main, ".git"), { recursive: true });
+      mkdirSync(wt);
+      writeFileSync(join(wt, ".git"), "gitdir: ../main/.git/worktrees/wt\n");
+      expect(isLinkedWorktree(main)).toBe(false);
+      expect(isLinkedWorktree(wt)).toBe(true);
+      expect(isLinkedWorktree(join(dir, "nope"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

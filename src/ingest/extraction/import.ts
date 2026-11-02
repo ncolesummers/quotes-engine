@@ -88,7 +88,7 @@ export function importExtractions(
     const extractedAt = now().toISOString();
     for (const result of results) {
       try {
-        const counts = db.transaction(() => importResult(db, result, extractedAt))();
+        const counts = db.transaction(() => importResult(db, result, extractedAt)).immediate();
         summary.postsExtracted++;
         summary.quotesCreated += counts.quotesCreated;
         summary.quotesLinked += counts.quotesLinked;

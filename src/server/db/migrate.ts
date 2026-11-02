@@ -83,7 +83,7 @@ export function migrate(db: Database, dir: string | URL = DEFAULT_MIGRATIONS_DIR
           }
           baseline = violations;
           record.run(m.version, m.name, new Date().toISOString());
-        })();
+        }).immediate();
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         throw new Error(`Migration ${m.name} failed: ${reason}`, { cause: err });

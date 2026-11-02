@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isPidAlive } from "./lock";
 import {
   CommandStepError,
   commandStep,
@@ -127,6 +128,15 @@ describe("runSync", () => {
     expect(entries.map((e) => e.ok)).toEqual([true, false]);
   });
 
+  test("the log stays one valid JSON array after many runs, with no temp files left", async () => {
+    for (let i = 0; i < 20; i++) {
+      await runSync({ steps: [step("a", [])], now: steppingClock(), log, logDir });
+    }
+    const path = join(logDir, "sync-2026-11-02.json");
+    expect(JSON.parse(readFileSync(path, "utf8"))).toHaveLength(20);
+    expect(readdirSync(logDir)).toEqual(["sync-2026-11-02.json"]);
+  });
+
   test("creates the log dir and keeps a corrupt log file aside instead of losing it", async () => {
     const nested = join(logDir, "nested");
     await runSync({ steps: [], now: steppingClock(), log, logDir: nested });
@@ -136,7 +146,27 @@ describe("runSync", () => {
     writeFileSync(path, "{not json");
     await runSync({ steps: [], now: steppingClock(), log, logDir: nested });
     expect(JSON.parse(readFileSync(path, "utf8"))).toHaveLength(1);
-    expect(readFileSync(`${path}.corrupt`, "utf8")).toBe("{not json");
+    const aside = readdirSync(nested).filter((f) => f.endsWith(".corrupt"));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(nested, aside[0] ?? ""), "utf8")).toBe("{not json");
+  });
+
+  test("a log directory that cannot be written still notifies and returns the summary", async () => {
+    const blocked = join(logDir, "not-a-dir");
+    writeFileSync(blocked, "a file where the log dir should be");
+    const notes: string[] = [];
+    const summary = await runSync({
+      steps: [step("a", [], "bad")],
+      now: steppingClock(),
+      log,
+      logDir: blocked,
+      notify: (_t, m) => {
+        notes.push(m);
+      },
+    });
+    expect(summary.ok).toBe(false);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("Could not write");
   });
 
   test("notifies only when a step failed, and a failing notifier is harmless", async () => {
@@ -216,5 +246,56 @@ describe("commandStep", () => {
       timeoutMs: 200,
     });
     await expect(s.run()).rejects.toThrow(/timed out/);
+  });
+
+  test("a timeout kills the whole process group, so a grandchild holding the pipe cannot stall it", async () => {
+    // `sh` forks `sleep`, which inherits stdout; killing only `sh` would leave the pipe open.
+    const s = commandStep("tree", ["sh", "-c", "sleep 5; echo done"], {
+      cwd: tmpdir(),
+      write: quiet,
+      timeoutMs: 200,
+    });
+    const started = Date.now();
+    await expect(s.run()).rejects.toThrow(/timed out/);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  test("a child that ignores SIGTERM is SIGKILLed after the grace period", async () => {
+    const s = commandStep(
+      "stubborn",
+      [bun, "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      { cwd: tmpdir(), write: quiet, timeoutMs: 300, killGraceMs: 200 },
+    );
+    const started = Date.now();
+    await expect(s.run()).rejects.toThrow(/timed out/);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+});
+
+describe("sync entry point signals", () => {
+  test("SIGTERM kills the running step's process group and frees the lock", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "qe-sigterm-"));
+    try {
+      const lock = join(dir, "sync.lock");
+      const pidFile = join(dir, "grandchild.pid");
+      const helper = join(import.meta.dir, "../../test/helpers/sync-signal-fixture.ts");
+      const proc = Bun.spawn([process.execPath, helper, lock, pidFile], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // Wait for the step's grandchild to start (it writes its PID).
+      for (let i = 0; i < 100 && !existsSync(pidFile); i++) await Bun.sleep(50);
+      expect(existsSync(lock)).toBe(true);
+      const grandchild = Number(readFileSync(pidFile, "utf8").trim());
+      expect(grandchild).toBeGreaterThan(0);
+
+      proc.kill("SIGTERM");
+      expect(await proc.exited).toBe(143);
+      expect(existsSync(lock)).toBe(false);
+      await Bun.sleep(100);
+      expect(isPidAlive(grandchild)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

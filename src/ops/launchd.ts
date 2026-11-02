@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export const LABEL = "com.ncolesummers.quotes-engine.sync";
@@ -21,9 +21,9 @@ export interface PlistVars {
 
 /**
  * The bun the job runs, which is also the binary that needs Full Disk Access: BUN_BIN, else the
- * standard `~/.bun/bin/bun`, else the bun running now. `bun run` puts a `node_modules/bun` (a
- * peer dependency of bun-plugin-tailwind) first on PATH and in `process.execPath`, and a
- * project-local binary is not something to grant Full Disk Access to.
+ * standard `~/.bun/bin/bun`, else the bun running now. `bun run` can put a `node_modules/bun` (a
+ * peer dependency of bun-plugin-tailwind) first on PATH and in `process.execPath`; a
+ * project-local binary is not something to grant Full Disk Access to, so that case throws.
  */
 export function resolveBunPath({
   env,
@@ -38,7 +38,22 @@ export function resolveBunPath({
 }): string {
   if (env.BUN_BIN) return env.BUN_BIN;
   const standard = join(home, ".bun/bin/bun");
-  return exists(standard) ? standard : execPath;
+  if (exists(standard)) return standard;
+  if (execPath.includes("/node_modules/")) {
+    throw new Error(
+      `The running bun is project-local (${execPath}); set BUN_BIN to the bun the job should use.`,
+    );
+  }
+  return execPath;
+}
+
+/** True when `dir` is a linked `git worktree` checkout (its `.git` is a file, not a directory). */
+export function isLinkedWorktree(dir: string): boolean {
+  try {
+    return statSync(join(dir, ".git")).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -51,11 +66,14 @@ export function plistVars({
   repoDir,
   bunPath,
   claudeBin,
+  dataDir = "data",
 }: {
   home: string;
   repoDir: string;
   bunPath: string;
   claudeBin: string;
+  /** DATA_DIR, resolved against the repo exactly as scripts/sync.ts does (default `data`). */
+  dataDir?: string;
 }): PlistVars {
   const path = [
     dirname(bunPath),
@@ -75,7 +93,7 @@ export function plistVars({
     home,
     claudeBin,
     path: path.join(":"),
-    logDir: join(repoDir, "data/logs"),
+    logDir: join(resolve(repoDir, dataDir), "logs"),
   };
 }
 
@@ -136,16 +154,28 @@ function bootout(target: AgentTarget): boolean {
 }
 
 /**
- * Writes the plist, checks it with `plutil -lint`, boots out any loaded copy (so reinstalling
- * picks up changes), then `launchctl bootstrap gui/<uid>`: a per-user LaunchAgent, which sees
- * the login Keychain. Never a LaunchDaemon.
+ * Lints the plist with `plutil -lint` before it replaces the installed one, boots out any loaded
+ * copy (so reinstalling picks up changes), waits for launchd to finish tearing it down, then
+ * `launchctl bootstrap gui/<uid>`: a per-user LaunchAgent, which sees the login Keychain. Never a
+ * LaunchDaemon. `bootout` returns before the service is gone, and bootstrapping too early fails
+ * with "Bootstrap failed: 5: Input/output error".
  */
-export function installAgent(target: AgentTarget & { plistPath: string; contents: string }): void {
+export function installAgent(
+  target: AgentTarget & { plistPath: string; contents: string; sleep?: (ms: number) => void },
+): void {
+  const sleep = target.sleep ?? Bun.sleepSync;
   mkdirSync(dirname(target.plistPath), { recursive: true });
-  writeFileSync(target.plistPath, target.contents);
-  const lint = target.run(["plutil", "-lint", target.plistPath]);
-  if (lint.exitCode !== 0) throw failure("plutil -lint", lint);
-  bootout(target);
+  const tmp = `${target.plistPath}.tmp`;
+  writeFileSync(tmp, target.contents);
+  const lint = target.run(["plutil", "-lint", tmp]);
+  if (lint.exitCode !== 0) {
+    rmSync(tmp, { force: true });
+    throw failure("plutil -lint", lint);
+  }
+  renameSync(tmp, target.plistPath);
+  if (bootout(target)) {
+    for (let i = 0; i < 50 && agentStatus(target).loaded; i++) sleep(100);
+  }
   const boot = target.run(["launchctl", "bootstrap", `gui/${target.uid}`, target.plistPath]);
   if (boot.exitCode !== 0) throw failure("launchctl bootstrap", boot);
 }

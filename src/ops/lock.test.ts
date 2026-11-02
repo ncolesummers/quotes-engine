@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireLock, isPidAlive, LockHeldError, withLock } from "./lock";
@@ -65,6 +73,46 @@ describe("lockfile", () => {
 
     expect(await withLock(path, async () => 7)).toBe(7);
     expect(existsSync(path)).toBe(false);
+  });
+
+  test("a lock older than maxAgeMs is stale even if its PID is alive (PID reused)", () => {
+    acquireLock(path, { pid: 111 });
+    const old = new Date(Date.now() - 5 * 60 * 60_000);
+    utimesSync(path, old, old);
+    acquireLock(path, { pid: 222, isAlive: () => true, maxAgeMs: 4 * 60 * 60_000 });
+    expect(readFileSync(path, "utf8").trim()).toBe("222");
+  });
+
+  test("a fresh lock with a live PID is still refused when maxAgeMs is set", () => {
+    acquireLock(path, { pid: 111 });
+    expect(() =>
+      acquireLock(path, { pid: 222, isAlive: () => true, maxAgeMs: 4 * 60 * 60_000 }),
+    ).toThrow(LockHeldError);
+  });
+
+  test("the lock file never exists without a PID, and leaves no temp files", () => {
+    const release = acquireLock(path, { pid: 4242 });
+    expect(readdirSync(join(dir, "nested"))).toEqual(["sync.lock"]);
+    release();
+    expect(readdirSync(join(dir, "nested"))).toEqual([]);
+  });
+
+  test("a takeover in progress elsewhere makes us back off with LockHeldError", () => {
+    acquireLock(path, { pid: 111 });
+    // Another process is mid-takeover of the stale lock: it holds the takeover mutex.
+    writeFileSync(`${path}.takeover`, "333\n");
+    expect(() => acquireLock(path, { pid: 222, isAlive: () => false })).toThrow(LockHeldError);
+    expect(readFileSync(path, "utf8").trim()).toBe("111");
+  });
+
+  test("a takeover mutex left by a crash is ignored once it is old", () => {
+    acquireLock(path, { pid: 111 });
+    writeFileSync(`${path}.takeover`, "333\n");
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(`${path}.takeover`, old, old);
+    acquireLock(path, { pid: 222, isAlive: () => false });
+    expect(readFileSync(path, "utf8").trim()).toBe("222");
+    expect(existsSync(`${path}.takeover`)).toBe(false);
   });
 
   test("isPidAlive: our own PID is alive, an unused one is not", () => {

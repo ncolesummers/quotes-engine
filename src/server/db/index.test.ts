@@ -156,6 +156,41 @@ describe("openDb", () => {
     }
   });
 
+  test("a deferred read-then-write transaction fails at once when another connection wrote", () => {
+    // Why every write transaction uses `.immediate()`: busy_timeout cannot help a deferred
+    // transaction whose read snapshot went stale; SQLite returns SQLITE_BUSY without waiting.
+    tmp = mkdtempSync(join(tmpdir(), "qe-db-"));
+    const path = join(tmp, "snapshot.db");
+    const a = openDb(path);
+    const b = openDb(path);
+    try {
+      expect(() =>
+        a.transaction(() => {
+          a.query("SELECT COUNT(*) FROM books").get();
+          b.run("INSERT INTO books (title, normalized_key, source) VALUES ('B', 'b', 'manual')");
+          a.run("INSERT INTO books (title, normalized_key, source) VALUES ('A', 'a', 'manual')");
+        })(),
+      ).toThrow(/SQLITE_BUSY|database is locked/);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  test("every write transaction in src/ takes the write lock up front (.immediate())", async () => {
+    const root = join(import.meta.dir, "../..");
+    const offenders: string[] = [];
+    for await (const file of new Bun.Glob("**/*.ts").scan(root)) {
+      if (file.includes(".test.")) continue;
+      const src = await Bun.file(join(root, file)).text();
+      const calls = src.match(/\.transaction\(/g)?.length ?? 0;
+      const immediate = src.match(/\)\s*\.immediate\(\)/g)?.length ?? 0;
+      if (calls !== immediate)
+        offenders.push(`${file} (${calls} transactions, ${immediate} immediate)`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
   test("uses QUOTES_DB_PATH when no path is given", () => {
     tmp = mkdtempSync(join(tmpdir(), "qe-db-"));
     const path = join(tmp, "env.db");

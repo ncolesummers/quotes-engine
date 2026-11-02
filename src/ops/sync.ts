@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { acquireLock, LockHeldError } from "./lock";
 
 /** One isolated step of the nightly sync. Throwing (or rejecting) marks it failed. */
 export interface SyncStep {
@@ -61,7 +62,10 @@ export function syncLogPath(logDir: string, at: Date): string {
   return join(logDir, `sync-${at.toISOString().slice(0, 10)}.json`);
 }
 
-/** Appends `entry` to the JSON array in `path`; a corrupt file is moved to `<path>.corrupt`. */
+/**
+ * Appends `entry` to the JSON array in `path`. Writes a temp file and renames it over, so a crash
+ * mid-write never leaves half a file. A corrupt file is moved aside to `<path>.<time>.corrupt`.
+ */
 function appendLogEntry(path: string, entry: SyncRunSummary, log: (m: string) => void): void {
   let entries: unknown[] = [];
   if (existsSync(path)) {
@@ -70,12 +74,15 @@ function appendLogEntry(path: string, entry: SyncRunSummary, log: (m: string) =>
       if (!Array.isArray(parsed)) throw new Error("not a JSON array");
       entries = parsed;
     } catch (err) {
-      renameSync(path, `${path}.corrupt`);
-      log(`${path} was unreadable (${errorMessage(err)}); moved it to ${path}.corrupt`);
+      const aside = `${path}.${Date.now()}.corrupt`;
+      renameSync(path, aside);
+      log(`${path} was unreadable (${errorMessage(err)}); moved it to ${aside}`);
     }
   }
   entries.push(entry);
-  writeFileSync(path, `${JSON.stringify(entries, null, 2)}\n`);
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(entries, null, 2)}\n`);
+  renameSync(tmp, path);
 }
 
 function errorMessage(err: unknown): string {
@@ -133,15 +140,23 @@ export async function runSync({
     steps: results,
   };
 
-  mkdirSync(logDir, { recursive: true });
   const path = syncLogPath(logDir, started);
-  appendLogEntry(path, summary, log);
-  log(`[sync] ${summary.ok ? "done" : "finished with failures"}; summary in ${path}`);
+  let where = `See ${path}`;
+  try {
+    mkdirSync(logDir, { recursive: true });
+    appendLogEntry(path, summary, log);
+    log(`[sync] ${summary.ok ? "done" : "finished with failures"}; summary in ${path}`);
+  } catch (err) {
+    // Never let a log problem swallow the failure notification.
+    where = `Could not write ${path}: ${errorMessage(err)}`;
+    log(`[sync] ${where}`);
+    log(JSON.stringify(summary));
+  }
 
   if (!summary.ok && notify) {
     const failed = results.filter((r) => !r.ok).map((r) => r.name);
     try {
-      await notify("quotes-engine sync failed", `Failed: ${failed.join(", ")}. See ${path}`);
+      await notify("quotes-engine sync failed", `Failed: ${failed.join(", ")}. ${where}`);
     } catch (err) {
       log(`[sync] notification failed: ${errorMessage(err)}`);
     }
@@ -156,8 +171,26 @@ export interface CommandStepOptions {
   write?: { stdout: (chunk: string) => void; stderr: (chunk: string) => void };
   /** Output lines kept for the summary (default 15). */
   tailLines?: number;
-  /** Kills the child after this long (default 60 minutes). */
+  /** Kills the child's process group after this long (default 60 minutes). */
   timeoutMs?: number;
+  /** After the timeout's SIGTERM, SIGKILL the group if it is still running this long (default 10 s). */
+  killGraceMs?: number;
+}
+
+/** Process groups of the command steps running now; `killActiveSteps` signals them. */
+const activeGroups = new Set<number>();
+
+function killGroup(pgid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, signal);
+  } catch {
+    // ESRCH: the whole group is already gone.
+  }
+}
+
+/** Signals every running command step's whole process group (children and grandchildren). */
+export function killActiveSteps(signal: NodeJS.Signals = "SIGKILL"): void {
+  for (const pgid of activeGroups) killGroup(pgid, signal);
 }
 
 export const DEFAULT_STEP_TIMEOUT_MS = 60 * 60_000;
@@ -165,7 +198,9 @@ export const DEFAULT_STEP_TIMEOUT_MS = 60 * 60_000;
 /**
  * A step that runs `cmd` as a child process, forwarding its output and keeping the last lines.
  * A separate process isolates the step completely: the step scripts call `process.exit`, and a
- * crash or leak in one cannot take down the steps after it. Non-zero exit throws.
+ * crash or leak in one cannot take down the steps after it. Non-zero exit throws. The child gets
+ * its own process group, so a timeout kills what it spawned too (`claude -p`, OCR); otherwise a
+ * grandchild holding the output pipe would keep the step waiting forever.
  */
 export function commandStep(
   name: string,
@@ -179,6 +214,7 @@ export function commandStep(
     },
     tailLines = 15,
     timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
+    killGraceMs = 10_000,
   }: CommandStepOptions,
 ): SyncStep {
   return {
@@ -190,11 +226,15 @@ export function commandStep(
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        detached: true,
       });
+      activeGroups.add(proc.pid);
       let timedOut = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
       const timer = setTimeout(() => {
         timedOut = true;
-        proc.kill();
+        killGroup(proc.pid, "SIGTERM");
+        killTimer = setTimeout(() => killGroup(proc.pid, "SIGKILL"), killGraceMs);
       }, timeoutMs);
 
       const tail: string[] = [];
@@ -229,7 +269,56 @@ export function commandStep(
         return { exitCode, output: tail };
       } finally {
         clearTimeout(timer);
+        clearTimeout(killTimer);
+        activeGroups.delete(proc.pid);
       }
     },
   };
+}
+
+/** Longest a sync can legitimately hold its lock: three steps at the default timeout, plus slack. */
+export const DEFAULT_LOCK_MAX_AGE_MS = 3 * DEFAULT_STEP_TIMEOUT_MS + 60 * 60_000;
+
+const SIGNAL_EXIT: Partial<Record<NodeJS.Signals, number>> = { SIGINT: 130, SIGTERM: 143 };
+
+/**
+ * The `bun run sync` entry point: holds the lock at `lockPath` for the whole run and resolves
+ * with the process exit code (0 ok, 1 a step failed or another sync is running).
+ *
+ * On SIGTERM (launchd's bootout / `kickstart -k`) or SIGINT, it kills the running step's process
+ * group, releases the lock and exits 143 / 130 right away, so no later step starts and no stale
+ * lock is left behind.
+ */
+export async function runSyncMain({
+  lockPath,
+  maxLockAgeMs = DEFAULT_LOCK_MAX_AGE_MS,
+  ...options
+}: RunSyncOptions & { lockPath: string; maxLockAgeMs?: number }): Promise<number> {
+  const log = options.log ?? console.log;
+  let release: () => void;
+  try {
+    release = acquireLock(lockPath, { maxAgeMs: maxLockAgeMs });
+  } catch (err) {
+    if (!(err instanceof LockHeldError)) throw err;
+    console.error(err.message);
+    return 1;
+  }
+
+  const handlers = Object.entries(SIGNAL_EXIT).map(([signal, code]) => {
+    const handler = () => {
+      log(`[sync] ${signal}: stopping the running step and releasing the lock`);
+      killActiveSteps("SIGKILL");
+      release();
+      process.exit(code);
+    };
+    process.on(signal, handler);
+    return () => process.off(signal, handler);
+  });
+  try {
+    const summary = await runSync({ ...options, log });
+    return summary.ok ? 0 : 1;
+  } finally {
+    for (const off of handlers) off();
+    release();
+  }
 }

@@ -20,7 +20,8 @@ TypeScript · Bun · Biome · React · Tailwind v4 · shadcn/ui · SQLite (`bun:
 
 - Each run appends a JSON summary to `data/logs/sync-YYYY-MM-DD.json` (UTC date). The summary has every step's status, its duration, and the last lines of its output.
 - The command exits 1 if any step failed. On failure it also shows a macOS notification; set `SYNC_NOTIFY=0` to turn that off.
-- `data/sync.lock` holds the running sync's PID, so a manual run and the scheduled run can't overlap. If the process that wrote the lock is no longer running, the next run takes over the lock.
+- `data/sync.lock` holds the running sync's PID, so a manual run and the scheduled run can't overlap. If the process that wrote the lock is no longer running, or the lock is more than 4 hours old, the next run takes over the lock.
+- Each step runs in its own process group. A step that runs past 60 minutes gets its whole group killed, including any `claude` it started. SIGTERM (from `launchctl bootout` or `kickstart -k`) or Ctrl-C stops the running step and releases the lock.
 - The Instagram token comes from the login Keychain (service `quotes-engine`, account `ig-access-token`). The token doesn't expire, so the sync has no token-refresh step and needs neither `op` nor a 1Password service account.
 - Each extraction batch costs about $0.002 in Haiku usage.
 
@@ -33,7 +34,7 @@ bun run launchd:uninstall  # launchctl bootout + remove the plist
 bun run launchd:render     # render + lint only, written to data/logs/ (no launchctl)
 ```
 
-- Run `launchd:install` from the checkout the job should use. The rendered plist hardcodes that repo's path, the path to `bun` (`~/.bun/bin/bun` unless you set `BUN_BIN`), and `CLAUDE_BIN`.
+- Run `launchd:install` from the checkout the job should use. The rendered plist hardcodes that repo's path, the path to `bun` (`~/.bun/bin/bun` unless you set `BUN_BIN`), and `CLAUDE_BIN`. Install refuses to run from a `git worktree` checkout unless you pass `--allow-worktree`.
 - Running `launchd:install` again boots out the loaded job first, so it's safe to repeat after you change something.
 - The job is a per-user LaunchAgent in the `gui/<uid>` domain, not a LaunchDaemon, so it can read the login Keychain and your Claude Code login.
 - It runs daily at 03:30 (`StartCalendarInterval`). A Mac that's asleep at that time runs the job when it wakes.
@@ -67,7 +68,7 @@ When bun is upgraded, its binary is replaced and macOS may drop the permission. 
 - **`import:books` fails with an access error:** bun doesn't have Full Disk Access (see above). The other steps still run.
 - **`claude` isn't found, or `extract:new` fails right away:** check `CLAUDE_BIN` in `~/Library/LaunchAgents/com.ncolesummers.quotes-engine.sync.plist`. Then reinstall with `CLAUDE_BIN=/path/to/claude bun run launchd:install`. If Claude reports an auth error under launchd, store a `claude setup-token` token in the Keychain.
 - **Instagram step: "No Instagram access token found":** add the token to the login Keychain with `security add-generic-password -U -s quotes-engine -a ig-access-token -w`. `IG_USER_ID` must be set in `.env`; launchd runs the job in the repo, so bun loads that `.env`.
-- **"Another sync is already running (pid N)":** a run is still going, or PID N was reused by some other process. Check with `ps -p N`. If it isn't a sync, delete `data/sync.lock`.
+- **"Another sync is already running (pid N)":** a run is still going, or PID N was reused by some other process. Check with `ps -p N`. If it isn't a sync, delete `data/sync.lock`; a lock older than 4 hours is taken over automatically.
 - **`database is locked` / `SQLITE_BUSY`:** every connection waits up to 5 s for the lock (`busy_timeout`), so this should be rare. If it still happens, stop whatever is holding the database open and run the job again.
 - **The job didn't run at 03:30:** check `bun run launchd:status`, which shows `last exit code` and `runs`, and read `data/logs/sync.err.log`.
 
