@@ -17,6 +17,27 @@ export function formatDate(iso: string | null | undefined): string | null {
   return Number.isNaN(date.getTime()) ? null : dateFormat.format(date);
 }
 
+/** `<Author>, <Title>`, leaving out whichever is missing or blank ("" when both are). */
+export function formatAttribution(book: { title: string | null; author: string | null }): string {
+  return [book.author, book.title]
+    .map((s) => s?.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+/** `“<text>” — <Author>, <Title>`, leaving out whichever of author and title is missing. */
+export function formatHighlightCopy({
+  text,
+  book,
+}: {
+  text: string;
+  book: { title: string | null; author: string | null };
+}): string {
+  const attribution = formatAttribution(book);
+  const quoted = `“${text.trim()}”`;
+  return attribution ? `${quoted} — ${attribution}` : quoted;
+}
+
 /** The book page (`/books/:id`) when the id is known, else a books search by title. */
 export function bookHref(title: string, id?: number | null): string {
   if (id != null) return `/books/${id}`;

@@ -1,7 +1,8 @@
 import { Route, Switch } from "wouter";
 import { BookDetailPage } from "@/pages/BookDetailPage";
 import { BooksPage } from "@/pages/BooksPage";
-import { NotFoundPage, PlaceholderPage } from "@/pages/PlaceholderPage";
+import { HighlightsPage } from "@/pages/HighlightsPage";
+import { NotFoundPage } from "@/pages/PlaceholderPage";
 import { QuoteDetailPage } from "@/pages/QuoteDetailPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SearchPage } from "@/pages/SearchPage";
@@ -19,11 +20,7 @@ export function AppRoutes() {
       <Route path="/books/:id">
         {(params) => <BookDetailPage key={params.id} id={params.id} />}
       </Route>
-      <Route path="/highlights">
-        <PlaceholderPage title="Highlights">
-          <p>Apple Books highlights waiting their turn arrive in a later issue.</p>
-        </PlaceholderPage>
-      </Route>
+      <Route path="/highlights" component={HighlightsPage} />
       <Route path="/review" component={ReviewPage} />
       <Route component={NotFoundPage} />
     </Switch>

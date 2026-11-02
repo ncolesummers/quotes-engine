@@ -4,7 +4,7 @@ import { resolve, sep } from "node:path";
 import type { BunRequest } from "bun";
 import { z } from "zod";
 import { getBookDetail, listBooks } from "./repos/books";
-import { getQuoteHighlights, listHighlights } from "./repos/highlights";
+import { getQuoteHighlights, listHighlightBooks, listHighlights } from "./repos/highlights";
 import { getQuote, getQuoteDetail, mergeQuotes, searchQuotes, updateQuote } from "./repos/quotes";
 import {
   dismissDuplicatePair,
@@ -140,13 +140,17 @@ const quotePatch = z
 
 const mergeBody = z.object({ dropId: positiveInt });
 
-const highlightsQuery = z.object({
+const highlightBooksQuery = z.object({
   unposted: z
     .enum(["1", "0", "true", "false"])
     .optional()
     .transform((v) => v === "1" || v === "true"),
-  book: text,
   q: text,
+});
+
+const highlightsQuery = highlightBooksQuery.extend({
+  book: text,
+  bookId: id.optional(),
   limit,
   offset,
 });
@@ -256,6 +260,12 @@ export function createRoutes(
 
     "/api/highlights": {
       GET: handle((req) => Response.json(listHighlights(db, parseQuery(highlightsQuery, req)))),
+    },
+
+    "/api/highlights/books": {
+      GET: handle((req) =>
+        Response.json(listHighlightBooks(db, parseQuery(highlightBooksQuery, req))),
+      ),
     },
 
     "/api/books": {
