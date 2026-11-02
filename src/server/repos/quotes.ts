@@ -340,7 +340,8 @@ export function getQuoteDetail(db: Database, id: number): QuoteDetail | null {
 
 /**
  * Merge `dropId` into `keepId`: moves post links (keeping keep's link where both share a post)
- * and highlights, fills keep's missing author/source/notes from drop, then deletes drop.
+ * and highlights, carries over drop's "not a duplicate" dismissals, fills keep's missing
+ * author/source/notes from drop, then deletes drop.
  */
 export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote {
   if (keepId === dropId) throw new Error("Cannot merge a quote into itself");
@@ -353,6 +354,14 @@ export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote
        SELECT post_id, $keepId, method, confidence, status FROM post_quotes WHERE quote_id = $dropId`,
     ).run(ids);
     db.query("UPDATE highlights SET quote_id = $keepId WHERE quote_id = $dropId").run(ids);
+    // "Not a duplicate" verdicts against the dropped quote now apply to the kept one (#17).
+    db.query(
+      `INSERT OR IGNORE INTO quote_not_duplicates (a_id, b_id)
+       SELECT MIN($keepId, other), MAX($keepId, other) FROM (
+         SELECT CASE WHEN a_id = $dropId THEN b_id ELSE a_id END AS other
+         FROM quote_not_duplicates WHERE $dropId IN (a_id, b_id)
+       ) WHERE other != $keepId`,
+    ).run(ids);
     db.query(
       `UPDATE quotes SET
          author = COALESCE(author, (SELECT author FROM quotes WHERE id = $dropId)),

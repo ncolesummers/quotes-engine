@@ -393,6 +393,31 @@ describe("review", () => {
     expect(detail.body.postings).toEqual([]);
   });
 
+  test("dismissed duplicate pairs don't come back", async () => {
+    const q1 = s.quote({ text: "the only way out is through the forest of doubt and fear" });
+    const q2 = s.quote({ text: "The only way out is through the forest of doubt and fears." });
+    expect((await get("/api/review")).body.duplicates).toHaveLength(1);
+
+    const r = await send("POST", "/api/review/duplicates/dismiss", { aId: q2.id, bId: q1.id });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ aId: q1.id, bId: q2.id });
+    expect((await get("/api/review")).body.duplicates).toEqual([]);
+    // Dismissing again is harmless.
+    expect(
+      (await send("POST", "/api/review/duplicates/dismiss", { aId: q1.id, bId: q2.id })).status,
+    ).toBe(200);
+    expect((await get("/api/review")).body.duplicates).toEqual([]);
+  });
+
+  test("dismiss: 400 on bad body or the same quote, 404 on an unknown quote", async () => {
+    const q = s.quote({ text: "a quote" });
+    const path = "/api/review/duplicates/dismiss";
+    expectError(await send("POST", path, { aId: q.id }), 400);
+    expectError(await send("POST", path, { aId: q.id, bId: "x" }), 400);
+    expectError(await send("POST", path, { aId: q.id, bId: q.id }), 400);
+    expectError(await send("POST", path, { aId: q.id, bId: 9999 }), 404);
+  });
+
   test("400 on bad action or ids, 404 on unknown link", async () => {
     const q = s.quote({ text: "a quote" });
     const p = s.post();

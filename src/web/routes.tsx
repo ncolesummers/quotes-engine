@@ -3,6 +3,7 @@ import { BookDetailPage } from "@/pages/BookDetailPage";
 import { BooksPage } from "@/pages/BooksPage";
 import { NotFoundPage, PlaceholderPage } from "@/pages/PlaceholderPage";
 import { QuoteDetailPage } from "@/pages/QuoteDetailPage";
+import { ReviewPage } from "@/pages/ReviewPage";
 import { SearchPage } from "@/pages/SearchPage";
 
 /** Route table. Replace placeholders as their issues land. */
@@ -23,11 +24,7 @@ export function AppRoutes() {
           <p>Apple Books highlights waiting their turn arrive in a later issue.</p>
         </PlaceholderPage>
       </Route>
-      <Route path="/review">
-        <PlaceholderPage title="Review">
-          <p>Post–quote links that need a second look arrive in a later issue.</p>
-        </PlaceholderPage>
-      </Route>
+      <Route path="/review" component={ReviewPage} />
       <Route component={NotFoundPage} />
     </Switch>
   );
