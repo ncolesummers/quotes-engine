@@ -1,5 +1,11 @@
 import { QueryClient } from "@tanstack/react-query";
-import { ApiError, type BookListParams, type QuoteSearchParams } from "@/api";
+import {
+  ApiError,
+  type BookListParams,
+  type HighlightFilter,
+  type HighlightListParams,
+  type QuoteSearchParams,
+} from "@/api";
 
 /** Query keys in one place so mutations (#14+) can invalidate precisely. */
 export const queryKeys = {
@@ -15,6 +21,12 @@ export const queryKeys = {
     all: ["books"] as const,
     list: (params: BookListParams) => ["books", "list", params] as const,
     detail: (id: number) => ["books", "detail", id] as const,
+  },
+  highlights: {
+    all: ["highlights"] as const,
+    books: (params: HighlightFilter) => ["highlights", "books", params] as const,
+    /** One book's highlights, paged (the offset lives in the infinite query's pages). */
+    list: (params: Omit<HighlightListParams, "offset">) => ["highlights", "list", params] as const,
   },
   /** `GET /api/review`: needs_review links and likely duplicates. */
   review: ["review"] as const,

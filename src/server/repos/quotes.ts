@@ -10,6 +10,7 @@ import {
   getBookRef,
   highlightBookId,
 } from "./books";
+import { likeContains } from "./sql";
 
 export interface Quote {
   id: number;
@@ -253,11 +254,6 @@ const SORT_SQL: Record<QuoteSort, string> = {
   postings: "postingCount DESC",
   recent: "lastPostedAt DESC NULLS LAST",
 };
-
-/** LIKE pattern matching `s` as a literal substring (with `ESCAPE '\'`). */
-export function likeContains(s: string): string {
-  return `%${s.replace(/[\\%_]/g, "\\$&")}%`;
-}
 
 export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSearchResult {
   const where: string[] = [];

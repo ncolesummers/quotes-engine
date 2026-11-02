@@ -171,6 +171,48 @@ export function bookEntry(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** One `items` entry of `GET /api/highlights`; an unposted highlight by default. */
+export function highlightItem(
+  overrides: Omit<Record<string, unknown>, "book"> & { book?: Record<string, unknown> } = {},
+) {
+  const { book, ...rest } = overrides;
+  const id = (rest.id as number | undefined) ?? 1;
+  return {
+    id,
+    annotationUuid: `uuid-${id}`,
+    text: "The trouble is, you think you have time.",
+    note: null,
+    location: null,
+    createdAt: "2026-03-05T12:00:00.000Z",
+    quoteId: null,
+    posted: false,
+    ...rest,
+    book: { id: 1, assetId: "asset-1", title: "Meditations", author: "Marcus Aurelius", ...book },
+  };
+}
+
+/** One `items` entry of `GET /api/highlights/books`. */
+export function highlightGroup(
+  overrides: {
+    book?: Record<string, unknown>;
+    count?: number;
+    lastHighlightedAt?: string | null;
+  } = {},
+) {
+  return {
+    count: 3,
+    lastHighlightedAt: "2026-03-05T12:00:00.000Z",
+    ...overrides,
+    book: {
+      id: 1,
+      assetId: "asset-1",
+      title: "Meditations",
+      author: "Marcus Aurelius",
+      ...overrides.book,
+    },
+  };
+}
+
 /** One `links` item of `GET /api/review`. */
 export function reviewLink(
   overrides: {

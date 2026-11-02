@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { HIGHLIGHT_POSTED_SQL } from "./highlights";
+import { HIGHLIGHT_POSTED_SQL } from "./sql";
 
 export interface Stats {
   quotes: number;

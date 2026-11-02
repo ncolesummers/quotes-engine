@@ -253,8 +253,69 @@ export interface BookListParams {
   attention?: boolean;
 }
 
+/** The book of an Apple Books highlight. */
+export interface HighlightBook {
+  id: number;
+  assetId: string | null;
+  title: string | null;
+  author: string | null;
+}
+
+/** One item of `GET /api/highlights`, newest first. */
+export interface Highlight {
+  id: number;
+  annotationUuid: string;
+  text: string | null;
+  note: string | null;
+  location: string | null;
+  createdAt: string | null;
+  quoteId: number | null;
+  /** Linked to a quote that appears on at least one post. */
+  posted: boolean;
+  book: HighlightBook;
+}
+
+export interface HighlightFilter {
+  /** Only highlights not yet posted. */
+  unposted?: boolean;
+  /** Substring of the highlight text or note. */
+  q?: string;
+}
+
+export interface HighlightListParams extends HighlightFilter {
+  /** Exact book id. */
+  bookId?: number;
+  /** Substring of the book title. */
+  book?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** One book of `GET /api/highlights/books`: how many highlights match, newest book first. */
+export interface HighlightBookGroup {
+  book: HighlightBook;
+  count: number;
+  lastHighlightedAt: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Endpoints
+
+/** Boolean filters go over the wire as `1`, and are left out when false. */
+function highlightParams({ unposted, ...rest }: HighlightListParams): Record<string, QueryValue> {
+  return { ...rest, unposted: unposted ? 1 : undefined };
+}
+
+export function fetchHighlights(params: HighlightListParams = {}): Promise<Page<Highlight>> {
+  return apiGet("/api/highlights", highlightParams(params));
+}
+
+/** Per-book counts of the matching highlights; `total` is their sum. */
+export function fetchHighlightBooks(
+  params: HighlightFilter = {},
+): Promise<{ items: HighlightBookGroup[]; total: number }> {
+  return apiGet("/api/highlights/books", highlightParams(params));
+}
 
 export function fetchQuotes({
   noBook,

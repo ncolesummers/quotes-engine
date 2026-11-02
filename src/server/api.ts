@@ -5,7 +5,7 @@ import type { BunRequest } from "bun";
 import { z } from "zod";
 import { deleteBook, mergeBooks, updateBook } from "./repos/book-cleanup";
 import { getBook, getBookDetail, listBooks } from "./repos/books";
-import { getQuoteHighlights, listHighlights } from "./repos/highlights";
+import { getQuoteHighlights, listHighlightBooks, listHighlights } from "./repos/highlights";
 import { getQuote, getQuoteDetail, mergeQuotes, searchQuotes, updateQuote } from "./repos/quotes";
 import {
   dismissDuplicatePair,
@@ -147,10 +147,14 @@ const quotePatch = z
 
 const mergeBody = z.object({ dropId: positiveInt });
 
-const highlightsQuery = z.object({
+const highlightBooksQuery = z.object({
   unposted: flag,
-  book: text,
   q: text,
+});
+
+const highlightsQuery = highlightBooksQuery.extend({
+  book: text,
+  bookId: id.optional(),
   limit,
   offset,
 });
@@ -280,6 +284,12 @@ export function createRoutes(
 
     "/api/highlights": {
       GET: handle((req) => Response.json(listHighlights(db, parseQuery(highlightsQuery, req)))),
+    },
+
+    "/api/highlights/books": {
+      GET: handle((req) =>
+        Response.json(listHighlightBooks(db, parseQuery(highlightBooksQuery, req))),
+      ),
     },
 
     "/api/books": {

@@ -1,8 +1,7 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { bookKey, bookTitleKey } from "../text/book-key";
 import { findDuplicateHints, looksLikeSeries } from "../text/book-title";
-import { HIGHLIGHT_POSTED_SQL } from "./highlights";
-import { likeContains } from "./quotes";
+import { HIGHLIGHT_POSTED_SQL, likeContains } from "./sql";
 
 /** Where a book record first came from. */
 export type BookSource = "apple_books" | "caption" | "manual";
