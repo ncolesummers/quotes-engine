@@ -19,13 +19,15 @@ class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Extra fields for the error body, e.g. `{ conflictId }` on a 409. */
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
   }
 }
 
-function errorResponse(status: number, error: string): Response {
-  return Response.json({ error }, { status });
+function errorResponse(status: number, error: string, details = {}): Response {
+  return Response.json({ ...details, error }, { status });
 }
 
 /** Wrap a handler so thrown `HttpError`s (and unexpected errors) become JSON responses. */
@@ -34,7 +36,7 @@ function handle<R extends Request>(fn: (req: R) => Response | Promise<Response>)
     try {
       return await fn(req);
     } catch (err) {
-      if (err instanceof HttpError) return errorResponse(err.status, err.message);
+      if (err instanceof HttpError) return errorResponse(err.status, err.message, err.details);
       console.error(err);
       return errorResponse(500, "Internal server error");
     }
@@ -215,7 +217,9 @@ export function createRoutes(
           case "empty_text":
             throw new HttpError(400, "text: must contain words");
           case "conflict":
-            throw new HttpError(409, `Text duplicates quote ${result.conflictId}`);
+            throw new HttpError(409, `Text duplicates quote ${result.conflictId}`, {
+              conflictId: result.conflictId,
+            });
         }
         return Response.json({ quote: result.quote });
       }),

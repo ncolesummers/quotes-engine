@@ -201,10 +201,12 @@ describe("PATCH /api/quotes/:id", () => {
   });
 
   test("409 when the new text collides with another quote", async () => {
-    s.quote({ text: "taken text" });
+    const taken = s.quote({ text: "taken text" });
     const q = s.quote({ text: "other" });
     const r = await send("PATCH", `/api/quotes/${q.id}`, { text: "Taken, text!" });
-    expectError(r, 409);
+    expect(r.status).toBe(409);
+    // The client opens the merge dialog on this quote, so the id is part of the body.
+    expect(r.body).toEqual({ error: expect.any(String), conflictId: taken.id });
   });
 
   test("editing a quote to its own normalized text is not a conflict", async () => {

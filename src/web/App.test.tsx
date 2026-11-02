@@ -100,11 +100,17 @@ describe("App shell", () => {
     ["/books", /books/i],
     ["/highlights", /highlights/i],
     ["/review", /review/i],
-    ["/quotes/42", /quote #42/i],
   ])("%s renders a placeholder page", (path, heading) => {
     fetchMock = api();
     renderWithProviders(<AppContent />, { path });
     expect(screen.getByRole("heading", { level: 1, name: heading })).toBeDefined();
+  });
+
+  test("/quotes/:id renders the quote detail page", async () => {
+    fetchMock = api();
+    renderWithProviders(<AppContent />, { path: "/quotes/42" });
+    expect(await screen.findByRole("heading", { name: /quote not found/i })).toBeDefined();
+    expect(fetchMock.callsTo("/api/quotes/42")).toHaveLength(1);
   });
 
   test("unknown routes render a not-found page", () => {
