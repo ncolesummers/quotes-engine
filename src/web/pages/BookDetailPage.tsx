@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ExternalLinkIcon } from "lucide-react";
 import { Link, useSearchParams } from "wouter";
 import { ApiError, type BookEntry, type BookEntryPosting, fetchBookDetail } from "@/api";
 import { BookProgress, bookStatsLine } from "@/components/BookProgress";
+import { CopyButton } from "@/components/CopyButton";
 import { PostedBadge } from "@/components/PostedBadge";
 import { PostThumbnail } from "@/components/PostThumbnail";
 import { Button } from "@/components/ui/button";
@@ -40,34 +40,6 @@ function useShowFilter() {
       { replace: true },
     );
   return { show, setShow };
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard unavailable (e.g. insecure context); the text stays selectable.
-    }
-  };
-
-  return (
-    <Button variant="ghost" size="sm" onClick={copy} className="h-7 gap-1.5 px-2 text-xs">
-      {copied ? (
-        <CheckIcon aria-hidden className="size-3.5 text-primary" />
-      ) : (
-        <CopyIcon aria-hidden className="size-3.5" />
-      )}
-      <span aria-live="polite">{copied ? "Copied" : "Copy"}</span>
-    </Button>
-  );
 }
 
 function PostingTile({ posting }: { posting: BookEntryPosting }) {

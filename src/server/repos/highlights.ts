@@ -26,10 +26,22 @@ export interface ListHighlightsParams {
   unposted?: boolean;
   /** Literal substring of the book title (SQLite LIKE). */
   book?: string;
+  /** Exact book id. */
+  bookId?: number;
   /** Literal substring of the highlight text or note (SQLite LIKE). */
   q?: string;
   limit: number;
   offset: number;
+}
+
+export type HighlightFilter = Pick<ListHighlightsParams, "unposted" | "book" | "bookId" | "q">;
+
+/** One book's share of the highlights matching a filter (`listHighlightBooks`). */
+export interface HighlightBookGroup {
+  book: HighlightBook;
+  count: number;
+  /** Newest `created_at` among the matching highlights; null when none are dated. */
+  lastHighlightedAt: string | null;
 }
 
 export interface QuoteHighlight {
@@ -53,23 +65,36 @@ interface FlatHighlightRow extends Omit<HighlightRow, "posted" | "book"> {
   bookAuthor: string | null;
 }
 
+/** `FROM highlights h JOIN books b ... [WHERE ...]` and its binds for `filter`. */
+function highlightsFrom(filter: HighlightFilter): {
+  from: string;
+  binds: Record<string, string | number>;
+} {
+  const where: string[] = [];
+  const binds: Record<string, string | number> = {};
+  if (filter.unposted) where.push(`NOT ${HIGHLIGHT_POSTED_SQL}`);
+  if (filter.book) {
+    where.push("b.title LIKE $book ESCAPE '\\'");
+    binds.book = likeContains(filter.book);
+  }
+  if (filter.bookId !== undefined) {
+    where.push("h.book_id = $bookId");
+    binds.bookId = filter.bookId;
+  }
+  if (filter.q) {
+    where.push("(h.text LIKE $q ESCAPE '\\' OR h.note LIKE $q ESCAPE '\\')");
+    binds.q = likeContains(filter.q);
+  }
+  const from = `FROM highlights h JOIN books b ON b.id = h.book_id
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+  return { from, binds };
+}
+
 export function listHighlights(
   db: Database,
   params: ListHighlightsParams,
 ): { items: HighlightRow[]; total: number } {
-  const where: string[] = [];
-  const binds: Record<string, string | number> = {};
-  if (params.unposted) where.push(`NOT ${HIGHLIGHT_POSTED_SQL}`);
-  if (params.book) {
-    where.push("b.title LIKE $book ESCAPE '\\'");
-    binds.book = likeContains(params.book);
-  }
-  if (params.q) {
-    where.push("(h.text LIKE $q ESCAPE '\\' OR h.note LIKE $q ESCAPE '\\')");
-    binds.q = likeContains(params.q);
-  }
-  const from = `FROM highlights h JOIN books b ON b.id = h.book_id
-    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+  const { from, binds } = highlightsFrom(params);
 
   const total =
     db.query<{ n: number }, SQLQueryBindings>(`SELECT COUNT(*) AS n ${from}`).get(binds)?.n ?? 0;
@@ -90,6 +115,32 @@ export function listHighlights(
     book: { id: bookId, assetId: bookAssetId, title: bookTitle, author: bookAuthor },
   }));
   return { items, total };
+}
+
+/**
+ * Per-book counts of the highlights matching `filter`, the book with the most recent matching
+ * highlight first (books with only undated matches last); `total` is the sum of the counts.
+ */
+export function listHighlightBooks(
+  db: Database,
+  filter: HighlightFilter,
+): { items: HighlightBookGroup[]; total: number } {
+  const { from, binds } = highlightsFrom(filter);
+  const rows = db
+    .query<HighlightBook & { count: number; lastHighlightedAt: string | null }, SQLQueryBindings>(
+      `SELECT b.id, b.asset_id AS assetId, b.title, b.author, COUNT(*) AS count,
+         MAX(h.created_at) AS lastHighlightedAt
+       ${from}
+       GROUP BY b.id
+       ORDER BY lastHighlightedAt DESC NULLS LAST, b.id DESC`,
+    )
+    .all(binds);
+  const items = rows.map(({ count, lastHighlightedAt, ...book }) => ({
+    book,
+    count,
+    lastHighlightedAt,
+  }));
+  return { items, total: items.reduce((n, g) => n + g.count, 0) };
 }
 
 /** Highlights linked to a quote, with their book, oldest first. */

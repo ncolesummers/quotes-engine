@@ -329,8 +329,99 @@ describe("GET /api/highlights", () => {
     expect(page.body.items).toHaveLength(1);
   });
 
-  test.each(["unposted=yes", "limit=0", "offset=x"])("400 on bad param %s", async (qs) => {
-    expectError(await get(`/api/highlights?${qs}`), 400);
+  test("filters by exact bookId, combined with unposted and q", async () => {
+    const { book1, book2, h1, h2, h3 } = fixture();
+    const one = await get(`/api/highlights?bookId=${book1.id}`);
+    expect(one.body.total).toBe(2);
+    expect(one.body.items.map((h: { id: number }) => h.id)).toEqual([h2.id, h1.id]);
+    const unposted = await get(`/api/highlights?bookId=${book1.id}&unposted=1`);
+    expect(unposted.body.items.map((h: { id: number }) => h.id)).toEqual([h1.id]);
+    const q = await get(`/api/highlights?bookId=${book2.id}&q=woods`);
+    expect(q.body.items.map((h: { id: number }) => h.id)).toEqual([h3.id]);
+    const none = await get("/api/highlights?bookId=999");
+    expect(none.body).toEqual({ items: [], total: 0 });
+  });
+
+  test.each(["unposted=yes", "limit=0", "offset=x", "bookId=0", "bookId=abc"])(
+    "400 on bad param %s",
+    async (qs) => {
+      expectError(await get(`/api/highlights?${qs}`), 400);
+    },
+  );
+});
+
+describe("GET /api/highlights/books", () => {
+  function fixture() {
+    const older = s.book({ title: "Meditations", author: "Marcus Aurelius" });
+    const newer = s.book({ title: "Walden", author: "Thoreau" });
+    const empty = s.book({ title: "No highlights" });
+    const posted = s.quote({ text: "posted one" });
+    s.posting(posted.id);
+    s.highlight({
+      bookId: older.id,
+      text: "power over your mind",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    s.highlight({
+      bookId: older.id,
+      text: "posted one",
+      quoteId: posted.id,
+      createdAt: "2026-01-05T00:00:00.000Z",
+    });
+    s.highlight({ bookId: older.id, text: "undated", createdAt: null });
+    s.highlight({
+      bookId: newer.id,
+      text: "I went to the woods",
+      note: "deliberately",
+      createdAt: "2026-01-03T00:00:00.000Z",
+    });
+    return { older, newer, empty };
+  }
+
+  test("counts highlights per book, most recent highlight first", async () => {
+    const { older, newer } = fixture();
+    const r = await get("/api/highlights/books");
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({
+      total: 4,
+      items: [
+        {
+          book: {
+            id: older.id,
+            assetId: older.assetId,
+            title: "Meditations",
+            author: "Marcus Aurelius",
+          },
+          count: 3,
+          lastHighlightedAt: "2026-01-05T00:00:00.000Z",
+        },
+        {
+          book: { id: newer.id, assetId: newer.assetId, title: "Walden", author: "Thoreau" },
+          count: 1,
+          lastHighlightedAt: "2026-01-03T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  test("unposted and q narrow the counts (and the sort follows)", async () => {
+    const { older, newer } = fixture();
+    const unposted = await get("/api/highlights/books?unposted=1");
+    expect(unposted.body.total).toBe(3);
+    expect(
+      unposted.body.items.map((g: { book: { id: number }; count: number }) => [g.book.id, g.count]),
+    ).toEqual([
+      [newer.id, 1],
+      [older.id, 2],
+    ]);
+    expect(unposted.body.items[1].lastHighlightedAt).toBe("2026-01-01T00:00:00.000Z");
+
+    const q = await get("/api/highlights/books?q=DELIBERATE");
+    expect(q.body).toMatchObject({ total: 1, items: [{ book: { id: newer.id }, count: 1 }] });
+  });
+
+  test("400 on bad unposted", async () => {
+    expectError(await get("/api/highlights/books?unposted=maybe"), 400);
   });
 });
 
