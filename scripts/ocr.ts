@@ -15,7 +15,7 @@ import {
   createSwiftOcrRunner,
   DEFAULT_OCR_BIN_PATH,
   ensureOcrBinary,
-  isSwiftAvailable,
+  isVisionOcrAvailable,
 } from "../src/ingest/ocr/swift";
 import { openDb } from "../src/server/db/index";
 
@@ -28,7 +28,7 @@ if (!Number.isInteger(concurrency) || concurrency < 1) {
   console.error(`--concurrency must be a positive integer, got ${values.concurrency}`);
   process.exit(1);
 }
-if (!isSwiftAvailable()) {
+if (!isVisionOcrAvailable()) {
   console.error("OCR needs the Swift toolchain and Apple's Vision framework (macOS).");
   process.exit(1);
 }

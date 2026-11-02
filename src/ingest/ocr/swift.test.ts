@@ -2,12 +2,21 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSwiftOcrRunner, ensureOcrBinary, isSwiftAvailable, OCR_SCRIPT_PATH } from "./swift";
+import {
+  createSwiftOcrRunner,
+  ensureOcrBinary,
+  isVisionOcrAvailable,
+  OCR_SCRIPT_PATH,
+} from "./swift";
 
 const RENDER_SCRIPT = join(import.meta.dir, "../../../test/fixtures/ocr/render-text.swift");
 
-// Opt-in: needs Apple's Vision framework, so it runs only where `swift` is installed (macOS).
-describe.skipIf(!isSwiftAvailable())("Swift Vision OCR CLI (macOS)", () => {
+test("Vision OCR is never available off macOS, even with Swift installed", () => {
+  expect(isVisionOcrAvailable("linux")).toBe(false);
+});
+
+// Opt-in: needs Apple's Vision framework, so it runs only on macOS with `swift` installed.
+describe.skipIf(!isVisionOcrAvailable())("Swift Vision OCR CLI (macOS)", () => {
   let root: string;
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "quotes-swift-ocr-"));

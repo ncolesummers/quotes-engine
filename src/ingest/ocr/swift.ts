@@ -8,9 +8,12 @@ export const OCR_SCRIPT_PATH = join(import.meta.dir, "../../../scripts/ocr/ocr.s
 /** Where `bun run ocr` compiles it (`data/` is gitignored). */
 export const DEFAULT_OCR_BIN_PATH = "data/bin/ocr";
 
-/** True when the Swift toolchain (and so, on macOS, Vision) is available. */
-export function isSwiftAvailable(): boolean {
-  return Bun.which("swift") !== null && Bun.which("swiftc") !== null;
+/**
+ * True when Vision OCR can run: macOS with the Swift toolchain. Linux can have Swift (GitHub's
+ * ubuntu runners do) but has no Vision or AppKit.
+ */
+export function isVisionOcrAvailable(platform: string = process.platform): boolean {
+  return platform === "darwin" && Bun.which("swift") !== null && Bun.which("swiftc") !== null;
 }
 
 /**
