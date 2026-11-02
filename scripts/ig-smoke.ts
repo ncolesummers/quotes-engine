@@ -1,7 +1,8 @@
 /**
  * Manual smoke test against the real Instagram Graph API. Not run by `bun test`.
  *
- *   op run --env-file=.env -- bun scripts/ig-smoke.ts
+ *   bun scripts/ig-smoke.ts                            # token from the macOS Keychain
+ *   op run --env-file=.env -- bun scripts/ig-smoke.ts  # or IG_ACCESS_TOKEN from 1Password
  *
  * Prints the account username and the newest post's id and like_count. Never prints the token.
  */
