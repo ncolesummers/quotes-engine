@@ -2,11 +2,11 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createTestDb } from "../../../test/helpers/db";
 import { getPostByIgMediaId, upsertPost } from "../../server/repos/posts";
 import type { OcrImage } from "../ocr/parse";
-import type { OcrRunner } from "../ocr/run";
+import { type OcrRunner, runOcr } from "../ocr/run";
 import type { ClassificationFileSchema } from "./classification-schema";
 import { writeClassificationBatches } from "./classify-batches";
 import {
@@ -31,7 +31,6 @@ beforeEach(() => {
     mediaDir: join(root, "media"),
     ocrDir: join(root, "ocr"),
     extractionsDir: join(root, "extractions"),
-    cwd: root,
   };
   mkdirSync(paths.mediaDir, { recursive: true });
 });
@@ -102,6 +101,9 @@ function cannedClassification(batchPath: string): ClassificationInput {
   };
 }
 
+/** What each fake agent saw in its batch file (the staged copy is gone after the run). */
+const seenBatches = new Map<string, string>();
+
 /** A fake `claude -p`: writes the canned result file, then reports `outcome`. */
 function fakeClassifier(
   requests: ClassifyRequest[],
@@ -110,8 +112,9 @@ function fakeClassifier(
 ): Classifier {
   return async (req) => {
     requests.push(req);
+    seenBatches.set(req.batchPath, readFileSync(req.batchPath, "utf8"));
     if (write) {
-      mkdirSync(join(paths.extractionsDir, "classified"), { recursive: true });
+      mkdirSync(dirname(req.outPath), { recursive: true });
       writeFileSync(req.outPath, JSON.stringify(cannedClassification(req.batchPath)));
     }
     return { exitCode: 0, timedOut: false, stdout: "", stderr: "", ...outcome };
@@ -147,14 +150,21 @@ describe("extractNewPosts", () => {
     expect(ocrCalls.flat()).toHaveLength(2);
     expect(requests).toHaveLength(1);
     const [req] = requests as [ClassifyRequest];
-    expect(req.batchPath).toBe(join(paths.extractionsDir, "todo", "batch-001.json"));
-    expect(req.outPath).toBe(join(paths.extractionsDir, "classified", "batch-001.json"));
-    expect(req.cwd).toBe(paths.cwd);
+    // The agent works in its own staging dir, on a copy of the batch, and writes its result
+    // there; it gets no other directory, so it can't touch todo/, classified/ or the repo.
+    const staging = join(paths.extractionsDir, "classifying");
+    expect(req.cwd).toBe(staging);
+    expect(req.addDirs).toEqual([]);
+    expect(dirname(req.outPath)).toBe(staging);
+    expect(req.batchPath.startsWith(`${staging}/`)).toBe(true);
+    expect(req.batchPath).not.toBe(req.outPath);
+    expect(seenBatches.get(req.batchPath)).toBe(
+      readFileSync(join(paths.extractionsDir, "todo", "batch-001.json"), "utf8"),
+    );
     // The classification prompt for that batch, with absolute paths.
     expect(req.prompt).toContain(resolve(req.batchPath));
     expect(req.prompt).toContain(resolve(req.outPath));
     expect(req.prompt).toContain("Never write out quote text");
-    expect(req.addDirs).toEqual([resolve(paths.extractionsDir)]);
 
     expect(summary).toMatchObject({
       unextracted: 2,
@@ -174,6 +184,7 @@ describe("extractNewPosts", () => {
     // Nothing is left pending for the next run.
     expect(existsSync(join(paths.extractionsDir, "classified", "batch-001.json"))).toBe(false);
     expect(existsSync(join(paths.extractionsDir, "batch-001.json"))).toBe(false);
+    expect(existsSync(staging)).toBe(false);
   });
 
   test("runs one classifier per batch, sequentially", async () => {
@@ -390,7 +401,7 @@ describe("extractNewPosts", () => {
     expect(extractedAt("p-new")).toBe(NOW.toISOString());
     // Only the new post is classified again.
     expect(requests).toHaveLength(1);
-    const batch = JSON.parse(readFileSync(requests[0]?.batchPath as string, "utf8"));
+    const batch = JSON.parse(seenBatches.get(requests[0]?.batchPath as string) as string);
     expect(batch.posts.map((p: { ig_media_id: string }) => p.ig_media_id)).toEqual(["p-new"]);
     expect(summary.errors).toEqual([]);
   });
@@ -430,6 +441,43 @@ describe("extractNewPosts", () => {
     // p1 was extracted by the stale import, so nothing new is left to classify.
     expect(requests).toHaveLength(0);
     expect(summary.unextracted).toBe(0);
+  });
+
+  test("a result left in staging by an interrupted run is never imported", async () => {
+    // The previous run was killed while (or right after) its agent wrote a result, before the
+    // run was verified. That result is discarded, not assembled.
+    addPost("p1");
+    const staging = join(paths.extractionsDir, "classifying");
+    mkdirSync(join(staging, "input"), { recursive: true });
+    await runOcr(db, { mediaDir: paths.mediaDir, ocrDir: paths.ocrDir, runner: fakeOcr() });
+    const todo = join(paths.extractionsDir, "todo");
+    const { batches } = writeClassificationBatches(db, {
+      mediaDir: paths.mediaDir,
+      ocrDir: paths.ocrDir,
+      todoDir: todo,
+    });
+    const leftover = join(staging, "batch-001.json");
+    writeFileSync(leftover, JSON.stringify(cannedClassification(batches[0] as string)));
+
+    const summary = await extractNewPosts({
+      db,
+      paths,
+      runOcr: fakeOcr(),
+      // This run's own agent fails, so nothing can legitimately mark p1 extracted.
+      runClassifier: fakeClassifier([], { exitCode: 1 }, { write: false }),
+      now,
+      log: () => {},
+    });
+    expect(extractedAt("p1")).toBeNull();
+    expect(quoteTexts()).toEqual([]);
+    expect(summary.postsExtracted).toBe(0);
+    expect(summary.errors.some((e) => e.stage === "stale" && e.subject === "batch-001.json")).toBe(
+      true,
+    );
+    const failed = join(paths.extractionsDir, "classified", "failed");
+    expect(existsSync(join(failed, "batch-001.json"))).toBe(true);
+    expect(readFileSync(join(failed, "batch-001.json.error.txt"), "utf8")).toContain("interrupted");
+    expect(existsSync(join(paths.extractionsDir, "classified", "batch-001.json"))).toBe(false);
   });
 
   test("pending files that can't be cleared are reported, nothing is spawned", async () => {

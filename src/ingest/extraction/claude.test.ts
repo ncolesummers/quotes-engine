@@ -61,9 +61,13 @@ describe("claudeClassifyArgs", () => {
     expect(args.slice(0, 2)).toEqual(["-p", "classify batch-001"]);
     const flag = (name: string) => args[args.indexOf(name) + 1];
     expect(flag("--model")).toBe("haiku");
-    expect(flag("--allowedTools")).toBe("Read,Write");
     expect(flag("--tools")).toBe("Read,Write");
+    // No blanket allow rule: Write is only auto-accepted inside the working directories, and
+    // anything that would need a prompt (e.g. a write elsewhere) is denied, not left hanging.
+    expect(args).not.toContain("--allowedTools");
     expect(flag("--permission-mode")).toBe("acceptEdits");
+    expect(flag("--permission-prompts")).toBe("none");
+    expect(args).toContain("--strict-mcp-config");
     expect(flag("--output-format")).toBe("json");
     expect(flag("--add-dir")).toBe(join(root, "extractions"));
     expect(args).toContain("--no-session-persistence");
@@ -133,6 +137,15 @@ describe("createClaudeClassifier", () => {
     const outcome = await createClaudeClassifier({ bin, timeoutMs: 200 })(request());
     expect(outcome.timedOut).toBe(true);
     expect(performance.now() - started).toBeLessThan(5000);
+  });
+
+  test("a timeout also kills the processes the binary started", async () => {
+    const bin = fakeClaude(`sleep 30 &\necho $! > "${root}/child.pid"\nwait`);
+    const outcome = await createClaudeClassifier({ bin, timeoutMs: 300 })(request());
+    expect(outcome.timedOut).toBe(true);
+    const child = Number(readFileSync(join(root, "child.pid"), "utf8").trim());
+    await Bun.sleep(100);
+    expect(() => process.kill(child, 0)).toThrow();
   });
 
   test("a missing binary is a failed outcome, not a throw", async () => {

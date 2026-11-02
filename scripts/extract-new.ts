@@ -11,7 +11,8 @@
  * Env: QUOTES_DB_PATH, MEDIA_DIR (default data/media), OCR_DIR (default data/ocr),
  * EXTRACTIONS_DIR (default data/extractions), OCR_BIN (default data/bin/ocr),
  * CLAUDE_BIN (default `claude` from PATH), CLASSIFY_TIMEOUT_MS (default 300000).
- * Relative paths are resolved against the repo root, which is also the agents' cwd.
+ * Relative paths are resolved against the repo root. Each agent runs in
+ * <EXTRACTIONS_DIR>/classifying, which holds only a copy of its batch.
  */
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -41,6 +42,13 @@ if (!Number.isInteger(batchSize) || batchSize < 1) {
   process.exit(1);
 }
 const timeoutMs = Number(process.env.CLASSIFY_TIMEOUT_MS ?? DEFAULT_CLASSIFY_TIMEOUT_MS);
+// Number("") is 0 and Number("5m") is NaN; either would kill every agent at once.
+if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+  console.error(
+    `CLASSIFY_TIMEOUT_MS must be a positive integer (ms), got ${process.env.CLASSIFY_TIMEOUT_MS}`,
+  );
+  process.exit(1);
+}
 
 const repoRoot = resolve(import.meta.dir, "..");
 const fromRoot = (p: string) => resolve(repoRoot, p);
@@ -48,7 +56,6 @@ const paths = {
   mediaDir: fromRoot(process.env.MEDIA_DIR ?? DEFAULT_MEDIA_DIR),
   ocrDir: fromRoot(process.env.OCR_DIR ?? DEFAULT_OCR_DIR),
   extractionsDir: fromRoot(process.env.EXTRACTIONS_DIR ?? DEFAULT_EXTRACTIONS_DIR),
-  cwd: repoRoot,
 };
 
 // Compiled on first use only, so a run with nothing new stays cheap.

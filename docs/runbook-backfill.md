@@ -160,15 +160,19 @@ one at a time, with a 5-minute limit each (`CLASSIFY_TIMEOUT_MS`):
 
 ```sh
 claude -p "<classification prompt for the batch>" --model haiku --tools Read,Write \
-  --allowedTools Read,Write --permission-mode acceptEdits --output-format json \
-  --no-session-persistence --strict-mcp-config --add-dir <extractions dir>
+  --permission-mode acceptEdits --permission-prompts none --output-format json \
+  --no-session-persistence --strict-mcp-config
 ```
 
-The agent runs in the repo root. Then it assembles and imports the results. A batch whose agent
-exits non-zero, times out, reports an error or writes no result file is logged with its stderr; its
-partial result (if any) goes to `classified/failed/`, and its posts stay unextracted for the next
-run. Results left by an earlier, interrupted run (`classified/*.json` or `extractions/*.json`) are
-assembled and imported first. It prints each batch's time and cost, then a summary, and exits 1 if
+Each agent runs in `data/extractions/classifying/`, which holds only a copy of its batch, and writes
+its result there; Write is auto-accepted only inside that directory, and anything needing a
+permission prompt is denied. The result moves to `classified/` once the run is verified (exit 0, no
+error, file written), and is then assembled and imported. A timeout kills the agent's whole process
+group. A batch whose agent exits non-zero, times out, reports an error or writes no result file is
+logged with its stderr; its partial result (if any) goes to `classified/failed/`, and its posts stay
+unextracted for the next run. Results left by an earlier, interrupted run (`classified/*.json` or
+`extractions/*.json`) are assembled and imported first; a result still in `classifying/` was never
+verified, so it goes to `classified/failed/` instead. It prints each batch's time and cost, then a summary, and exits 1 if
 anything failed.
 
 Env: the same `QUOTES_DB_PATH`, `MEDIA_DIR`, `OCR_DIR`, `EXTRACTIONS_DIR` and `OCR_BIN` as above,

@@ -1,11 +1,11 @@
 import type { Database } from "bun:sqlite";
-import { existsSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { listUnextractedPosts } from "../../server/repos/posts";
 import { type OcrRunner, runOcr as runOcrStep } from "../ocr/run";
 import { assembleClassifications } from "./assemble";
 import { DEFAULT_BATCH_SIZE } from "./batches";
-import { buildClassificationPrompt, classifiedPathForBatch } from "./classification-prompt";
+import { buildClassificationPrompt } from "./classification-prompt";
 import { CLASSIFIED_SUBDIR, writeClassificationBatches } from "./classify-batches";
 import { importExtractions, listExtractionFiles, moveInto } from "./import";
 
@@ -14,19 +14,25 @@ export interface IncrementalPaths {
   ocrDir: string;
   /** e.g. `data/extractions`; holds `todo/`, `classified/`, `imported/`, ... */
   extractionsDir: string;
-  /** Working directory for the classifier (the repo root). */
-  cwd: string;
 }
+
+/**
+ * The classifier's working directory, under the extractions dir. Each agent gets a fresh one
+ * holding only a copy of its batch, and writes its result there; the result moves to
+ * `classified/` only once the run has been verified. Anything found here at start-up is from an
+ * interrupted, unverified run and is discarded.
+ */
+export const STAGING_SUBDIR = "classifying";
 
 /** One classification batch for one headless agent run. */
 export interface ClassifyRequest {
   batchPath: string;
-  /** Where the agent must write its result. */
+  /** Where the agent must write its result (inside `cwd`). */
   outPath: string;
   /** The full classification prompt for this batch. */
   prompt: string;
   cwd: string;
-  /** Directories outside `cwd` the agent needs to read and write. */
+  /** Directories outside `cwd` the agent may read and write (none for the incremental run). */
   addDirs: string[];
 }
 
@@ -127,6 +133,7 @@ export async function extractNewPosts({
   const { extractionsDir, mediaDir, ocrDir } = paths;
   const todoDir = join(extractionsDir, "todo");
   const classifiedDir = join(extractionsDir, CLASSIFIED_SUBDIR);
+  const stagingDir = resolve(extractionsDir, STAGING_SUBDIR);
   const summary: ExtractNewSummary = {
     unextracted: 0,
     ocrImages: 0,
@@ -160,6 +167,16 @@ export async function extractNewPosts({
     }
     return { files: files.length, imported };
   };
+
+  // 0. A result in staging was never verified (the run was killed during or right after its
+  // agent): never assemble it, keep it in classified/failed/ for inspection.
+  for (const file of listExtractionFiles(stagingDir)) {
+    const message = "result of an interrupted, unverified run; discarded (its posts stay queued)";
+    const dest = moveInto(file, join(classifiedDir, "failed"));
+    writeFileSync(`${dest}.error.txt`, `${message}\n`);
+    fail("stale", message, basename(file));
+  }
+  rmSync(stagingDir, { recursive: true, force: true });
 
   // 1. Results an earlier run left behind (e.g. it crashed between classifying and importing).
   const staleClassified = listExtractionFiles(classifiedDir).length;
@@ -211,14 +228,19 @@ export async function extractNewPosts({
 
   // 5. One agent per batch, sequentially.
   for (const batchPath of batches) {
-    const outPath = classifiedPathForBatch(batchPath, extractionsDir);
-    const batch = batchPath.split("/").at(-1) as string;
+    const batch = basename(batchPath);
+    // The agent only sees its own copy of the batch: the assembler reads the one in todo/.
+    rmSync(stagingDir, { recursive: true, force: true });
+    mkdirSync(join(stagingDir, "input"), { recursive: true });
+    const inputPath = join(stagingDir, "input", batch);
+    copyFileSync(batchPath, inputPath);
+    const outPath = join(stagingDir, batch);
     const req: ClassifyRequest = {
-      batchPath,
+      batchPath: inputPath,
       outPath,
-      prompt: buildClassificationPrompt({ batchPath, outPath }),
-      cwd: paths.cwd,
-      addDirs: [resolve(extractionsDir)],
+      prompt: buildClassificationPrompt({ batchPath: inputPath, outPath }),
+      cwd: stagingDir,
+      addDirs: [],
     };
     const started = performance.now();
     let outcome: ClassifyOutcome;
@@ -230,7 +252,8 @@ export async function extractNewPosts({
     const run: BatchRun = {
       batch,
       ok: false,
-      durationMs: outcome.durationMs ?? Math.round(performance.now() - started),
+      // Wall-clock, including CLI start-up: what CLASSIFY_TIMEOUT_MS is measured against.
+      durationMs: Math.round(performance.now() - started),
       ...(outcome.costUsd !== undefined ? { costUsd: outcome.costUsd } : {}),
       ...(outcome.result !== undefined ? { result: outcome.result } : {}),
     };
@@ -247,9 +270,12 @@ export async function extractNewPosts({
       }
       continue;
     }
+    mkdirSync(classifiedDir, { recursive: true });
+    renameSync(outPath, join(classifiedDir, batch));
     run.ok = true;
     summary.classified++;
   }
+  rmSync(stagingDir, { recursive: true, force: true });
 
   // 6–7. Assemble and import whatever was classified.
   if (summary.classified > 0) addImport(summary, assembleAndImport("assemble").imported);

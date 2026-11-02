@@ -6,9 +6,13 @@ export const CLASSIFIER_MODEL = "haiku";
 export const DEFAULT_CLASSIFY_TIMEOUT_MS = 5 * 60_000;
 
 /**
- * Arguments for one headless `claude -p` classification run: Haiku, only the Read and Write tools
- * (both pre-approved, so no prompt can block a run without a TTY), JSON output for cost and
- * errors, no MCP servers, no saved session.
+ * Arguments for one headless `claude -p` classification run: Haiku, only the Read and Write tools,
+ * JSON output for cost and errors, no MCP servers, no saved session.
+ *
+ * There is deliberately no `--allowedTools`: a bare `Write` allow rule would approve writes
+ * anywhere, and the agent reads untrusted captions and OCR text. `acceptEdits` auto-accepts
+ * writes inside the working directories only (`cwd` plus `addDirs`), and `--permission-prompts
+ * none` denies anything else at once instead of waiting for a prompt nobody can answer.
  */
 export function claudeClassifyArgs({ prompt, addDirs }: ClassifyRequest): string[] {
   return [
@@ -18,10 +22,10 @@ export function claudeClassifyArgs({ prompt, addDirs }: ClassifyRequest): string
     CLASSIFIER_MODEL,
     "--tools",
     "Read,Write",
-    "--allowedTools",
-    "Read,Write",
     "--permission-mode",
     "acceptEdits",
+    "--permission-prompts",
+    "none",
     "--output-format",
     "json",
     "--no-session-persistence",
@@ -70,6 +74,10 @@ export interface ClaudeClassifierOptions {
 /**
  * A `Classifier` that spawns `claude -p` once per batch in `req.cwd`, with stdin closed. A run
  * longer than `timeoutMs` is killed and reported as timed out. Never rejects.
+ *
+ * The child runs in its own process group, so a timeout kills everything it started, not just
+ * `claude`. Because that group no longer gets the terminal's Ctrl-C, SIGINT/SIGTERM to this
+ * process (and its exit) also kill the group before the signal is re-raised.
  */
 export function createClaudeClassifier({
   bin = "claude",
@@ -85,6 +93,7 @@ export function createClaudeClassifier({
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        detached: true,
       });
     } catch (err) {
       return {
@@ -95,11 +104,32 @@ export function createClaudeClassifier({
       };
     }
 
+    const killGroup = () => {
+      try {
+        process.kill(-proc.pid, "SIGKILL");
+      } catch {
+        // The group is already gone.
+      }
+    };
+    const onSignal = (signal: NodeJS.Signals) => {
+      killGroup();
+      removeHandlers();
+      process.kill(process.pid, signal);
+    };
+    const removeHandlers = () => {
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      process.off("exit", killGroup);
+    };
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+    process.once("exit", killGroup);
+
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Resolve as soon as the timer fires: a stuck grandchild could hold the pipes open past kill.
     const timeout = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => {
-        proc.kill("SIGKILL");
+        killGroup();
         resolve("timeout");
       }, timeoutMs);
     });
@@ -127,6 +157,9 @@ export function createClaudeClassifier({
       return outcome;
     } finally {
       clearTimeout(timer);
+      // Nothing of this run may outlive it (e.g. a grandchild that kept the pipes open).
+      killGroup();
+      removeHandlers();
     }
   };
 }
