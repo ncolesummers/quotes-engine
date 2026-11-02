@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createTestDb } from "../../../test/helpers/db";
 import { type Seeder, seed } from "../../../test/helpers/seed";
 import { deleteBook, mergeBooks, rekeyBooks, updateBook } from "./book-cleanup";
-import { findOrCreateBook, getBook, getBookDetail, listBooks } from "./books";
+import { deleteBookIfEmpty, findOrCreateBook, getBook, getBookDetail, listBooks } from "./books";
 
 let db: Database;
 let s: Seeder;
@@ -155,6 +155,41 @@ describe("mergeBooks", () => {
     expect(count("SELECT COUNT(*) AS n FROM books")).toBe(1);
   });
 
+  test("a merged-away title-only book isn't recreated by a caption that adds an author", () => {
+    const keep = s.book({ assetId: null, title: "1Q84", author: "Haruki Murakami" });
+    const drop = s.book({ assetId: null, title: "IQ84", author: null });
+    mergeBooks(db, keep.id, drop.id);
+    expect(findOrCreateBook(db, { title: "IQ84", author: "Haruki Murakami" })?.id).toBe(keep.id);
+    expect(count("SELECT COUNT(*) AS n FROM books")).toBe(1);
+  });
+
+  test("a merged-away authored book isn't recreated by a caption without an author", () => {
+    const keep = s.book({ assetId: null, title: "1Q84", author: "Haruki Murakami" });
+    const drop = s.book({ assetId: null, title: "IQ84", author: "Haruki Murakami" });
+    mergeBooks(db, keep.id, drop.id);
+    expect(findOrCreateBook(db, { title: "IQ84", author: null })?.id).toBe(keep.id);
+    expect(count("SELECT COUNT(*) AS n FROM books")).toBe(1);
+  });
+
+  test("a merge before books:rekey also aliases the dropped book's current-format key", () => {
+    const keep = s.book({ assetId: null, title: "Tom and Jerry Stories", author: "X" });
+    // Keyed before "&" folded into "and".
+    const drop = rawBook("Tom & Jerry", "X", "tom jerry|x");
+    mergeBooks(db, keep.id, drop);
+    expect(findOrCreateBook(db, { title: "Tom & Jerry", author: "X" })?.id).toBe(keep.id);
+    expect(count("SELECT COUNT(*) AS n FROM books")).toBe(1);
+  });
+
+  test("a kept caption book that took an Apple Books asset isn't deleted when emptied", () => {
+    const keep = s.book({ assetId: null, title: "Dune", author: "Frank Herbert" });
+    db.run(`UPDATE books SET source = 'caption' WHERE id = ${keep.id}`);
+    const drop = s.book({ assetId: "ASSET-DUNE", title: "Dune", author: "Frank P. Herbert" });
+    mergeBooks(db, keep.id, drop.id);
+    expect(getBook(db, keep.id)?.assetId).toBe("ASSET-DUNE");
+    deleteBookIfEmpty(db, keep.id);
+    expect(getBook(db, keep.id)).not.toBeNull();
+  });
+
   test("is atomic: a failure part-way leaves both books as they were", () => {
     const keep = s.book({ assetId: null, title: "Keep", author: null });
     const drop = s.book({ assetId: null, title: "Drop", author: "Someone" });
@@ -284,6 +319,7 @@ describe("rekeyBooks", () => {
           ],
         },
       ],
+      blocked: [],
     });
     expect(getBook(db, salt)?.normalizedKey).toBe("salt and signal|theo lindqvist and ana ruiz");
     // Colliding books keep their old keys and both still exist.
@@ -292,6 +328,18 @@ describe("rekeyBooks", () => {
     expect(getBook(db, fine)?.normalizedKey).toBe("dune|frank herbert");
     // Idempotent.
     expect(rekeyBooks(db).rekeyed).toBe(0);
+  });
+
+  test("reports a book whose new key is still held by a colliding book", () => {
+    // A and B collide on "foo and bar"; A still holds "foo bar", which C now computes.
+    const a = rawBook("Foo & Bar", null, "foo bar");
+    rawBook("Foo and Bar", null, "foo and bar");
+    const c = rawBook("Foo Bar", null, "foo-bar stale");
+    const summary = rekeyBooks(db);
+    expect(summary.collisions).toHaveLength(1);
+    expect(summary.blocked).toEqual([{ id: c, title: "Foo Bar", author: null }]);
+    expect(summary.unchanged).toBe(0);
+    expect(getBook(db, a)?.normalizedKey).toBe("foo bar");
   });
 
   test("handles keys that move onto a key another row is moving off", () => {

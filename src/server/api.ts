@@ -148,10 +148,7 @@ const quotePatch = z
 const mergeBody = z.object({ dropId: positiveInt });
 
 const highlightsQuery = z.object({
-  unposted: z
-    .enum(["1", "0", "true", "false"])
-    .optional()
-    .transform((v) => v === "1" || v === "true"),
+  unposted: flag,
   book: text,
   q: text,
   limit,

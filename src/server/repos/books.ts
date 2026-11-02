@@ -202,12 +202,19 @@ export function resolveBook(
         ).run({ author, key, assetId, id: bare.id });
         return { book: requireBook(db, bare.id), created: false };
       }
+      // A title-only book merged into another (its key is an alias of the kept book).
+      const bareAlias = aliasedBook(db, "key", titleKey);
+      if (bareAlias) return adopt(bareAlias);
     } else {
-      // No author: reuse the authored book with this title, if there's exactly one.
+      // No author: reuse the authored book with this title, if there's exactly one, counting
+      // books merged away under that title as the book they were merged into.
       const authored = db
         .query<Book, { prefix: string }>(
           `SELECT ${BOOK_COLUMNS} FROM books b
-           WHERE substr(b.normalized_key, 1, length($prefix)) = $prefix LIMIT 2`,
+           WHERE substr(b.normalized_key, 1, length($prefix)) = $prefix
+              OR b.id IN (SELECT book_id FROM book_aliases
+                          WHERE kind = 'key' AND substr(value, 1, length($prefix)) = $prefix)
+           LIMIT 2`,
         )
         .all({ prefix: `${titleKey}|` });
       if (authored.length === 1 && authored[0]) return adopt(authored[0]);
@@ -248,11 +255,12 @@ export function highlightBookId(db: Database, quoteId: number): number | null {
 
 /**
  * Deletes a caption or manual book that no quote or highlight refers to any more (e.g. one
- * left behind by a source-title typo fix). Apple Books records are kept.
+ * left behind by a source-title typo fix). Apple Books records are kept, as is any book that
+ * holds an Apple Books asset id (e.g. a caption book that adopted one, or kept one in a merge).
  */
 export function deleteBookIfEmpty(db: Database, id: number): void {
   db.query(
-    `DELETE FROM books WHERE id = $id AND source != 'apple_books'
+    `DELETE FROM books WHERE id = $id AND source != 'apple_books' AND asset_id IS NULL
        AND NOT EXISTS (SELECT 1 FROM quotes WHERE book_id = $id)
        AND NOT EXISTS (SELECT 1 FROM highlights WHERE book_id = $id)`,
   ).run({ id });

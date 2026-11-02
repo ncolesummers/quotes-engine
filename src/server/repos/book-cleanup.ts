@@ -55,6 +55,10 @@ export function mergeBooks(db: Database, keepId: number, dropId: number): Book {
     db.query("UPDATE highlights SET book_id = $keepId WHERE book_id = $dropId").run(binds);
     db.query("UPDATE book_aliases SET book_id = $keepId WHERE book_id = $dropId").run(binds);
     if (drop.normalizedKey) addAlias(db, "key", drop.normalizedKey, keepId);
+    // Before `books:rekey`, drop's stored key may be in an older format than captions now
+    // compute (e.g. "&" not yet spelled "and"); alias the current one too.
+    const dropKeyNow = bookKey(drop.title, drop.author);
+    if (dropKeyNow && dropKeyNow !== drop.normalizedKey) addAlias(db, "key", dropKeyNow, keepId);
     if (drop.assetId && keep.assetId) addAlias(db, "asset", drop.assetId, keepId);
 
     // Deleting first frees drop's unique key and asset id for keep.
@@ -146,6 +150,11 @@ export interface RekeySummary {
   unchanged: number;
   /** Books whose recomputed keys clash; they keep their current keys for a manual merge. */
   collisions: RekeyCollision[];
+  /**
+   * Books left on their current key because a colliding book still holds the new one;
+   * re-run after merging the collisions.
+   */
+  blocked: BookRef[];
 }
 
 /**
@@ -170,7 +179,7 @@ export function rekeyBooks(db: Database, { dryRun = false } = {}): RekeySummary 
       byKey.set(key, group);
     }
 
-    const summary: RekeySummary = { rekeyed: 0, unchanged: 0, collisions: [] };
+    const summary: RekeySummary = { rekeyed: 0, unchanged: 0, collisions: [], blocked: [] };
     const moves: { id: number; key: string }[] = [];
     for (const [key, group] of byKey) {
       if (group.length > 1) {
@@ -191,7 +200,11 @@ export function rekeyBooks(db: Database, { dryRun = false } = {}): RekeySummary 
     );
     const applicable = moves.filter((m) => !held.has(m.key));
     summary.rekeyed = applicable.length;
-    summary.unchanged += moves.length - applicable.length;
+    for (const m of moves) {
+      if (!held.has(m.key)) continue;
+      const row = rows.find((r) => r.id === m.id);
+      if (row) summary.blocked.push({ id: row.id, title: row.title, author: row.author });
+    }
 
     if (!dryRun) {
       // Clear first so keys can swap between rows without tripping the UNIQUE constraint.

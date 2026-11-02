@@ -11,7 +11,7 @@ import { rekeyBooks } from "../src/server/repos/book-cleanup";
 const dryRun = process.argv.includes("--dry-run");
 const db = openDb();
 try {
-  const { rekeyed, unchanged, collisions } = rekeyBooks(db, { dryRun });
+  const { rekeyed, unchanged, collisions, blocked } = rekeyBooks(db, { dryRun });
   console.log(
     `${dryRun ? "[dry run] " : ""}${rekeyed} books re-keyed, ${unchanged} unchanged, ${collisions.length} collisions`,
   );
@@ -21,6 +21,11 @@ try {
       console.log(`    #${b.id} ${b.title ?? "(untitled)"} — ${b.author ?? "?"}`);
   }
   if (collisions.length) console.log("\nMerge these from /books/<id> → “Merge with…”.");
+  if (blocked.length) {
+    console.log(`\n${blocked.length} books not re-keyed until those are merged (then re-run):`);
+    for (const b of blocked)
+      console.log(`    #${b.id} ${b.title ?? "(untitled)"} — ${b.author ?? "?"}`);
+  }
 } finally {
   db.close();
 }
