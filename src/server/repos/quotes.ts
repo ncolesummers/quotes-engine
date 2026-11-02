@@ -215,7 +215,7 @@ const SORT_SQL: Record<QuoteSort, string> = {
 };
 
 /** LIKE pattern matching `s` as a literal substring (with `ESCAPE '\'`). */
-function likeContains(s: string): string {
+export function likeContains(s: string): string {
   return `%${s.replace(/[\\%_]/g, "\\$&")}%`;
 }
 
@@ -315,5 +315,63 @@ export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote
     ).run(ids);
     db.query("DELETE FROM quotes WHERE id = $dropId").run({ dropId });
     return requireQuote(db, keepId);
+  })();
+}
+
+export interface QuotePatch {
+  text?: string;
+  author?: string | null;
+  sourceTitle?: string | null;
+  notes?: string | null;
+}
+
+export type UpdateQuoteResult =
+  | { status: "updated"; quote: Quote }
+  | { status: "not_found" }
+  | { status: "empty_text" }
+  /** Another quote already has the new text's normalized form. */
+  | { status: "conflict"; conflictId: number };
+
+const PATCH_COLUMNS = [
+  ["author", "author"],
+  ["sourceTitle", "source_title"],
+  ["notes", "notes"],
+] as const;
+
+/**
+ * Update a quote's editable fields; undefined fields are kept. A new `text` is trimmed and its
+ * `normalized_text` recomputed; it must not normalize to empty or collide with another quote.
+ */
+export function updateQuote(db: Database, id: number, patch: QuotePatch): UpdateQuoteResult {
+  return db.transaction((): UpdateQuoteResult => {
+    if (!getQuote(db, id)) return { status: "not_found" };
+    const sets: string[] = [];
+    const binds: Record<string, string | number | null> = { id };
+
+    if (patch.text !== undefined) {
+      const normalized = normalizeQuote(patch.text);
+      if (!normalized) return { status: "empty_text" };
+      const clash = db
+        .query<{ id: number }, { normalized: string; id: number }>(
+          "SELECT id FROM quotes WHERE normalized_text = $normalized AND id != $id",
+        )
+        .get({ normalized, id });
+      if (clash) return { status: "conflict", conflictId: clash.id };
+      sets.push("text = $text", "normalized_text = $normalized");
+      binds.text = patch.text.trim();
+      binds.normalized = normalized;
+    }
+    for (const [key, column] of PATCH_COLUMNS) {
+      const value = patch[key];
+      if (value === undefined) continue;
+      sets.push(`${column} = $${key}`);
+      binds[key] = value;
+    }
+    if (sets.length) {
+      db.query(`UPDATE quotes SET ${sets.join(", ")}, updated_at = ${NOW_SQL} WHERE id = $id`).run(
+        binds,
+      );
+    }
+    return { status: "updated", quote: requireQuote(db, id) };
   })();
 }

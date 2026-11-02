@@ -7,11 +7,19 @@ export const SAME_THRESHOLD = 0.97;
 /** Scores at or above this (but below SAME_THRESHOLD) are likely the same quote. */
 export const LIKELY_THRESHOLD = 0.85;
 
-function trigrams(s: string): Set<string> {
+/** Character trigrams of an already-normalized string, padded with a space on each side. */
+export function trigrams(s: string): Set<string> {
   const padded = ` ${s} `;
   const grams = new Set<string>();
   for (let i = 0; i + 3 <= padded.length; i++) grams.add(padded.slice(i, i + 3));
   return grams;
+}
+
+/** Jaccard similarity of two trigram sets (see `trigrams`). */
+export function jaccard(ga: Set<string>, gb: Set<string>): number {
+  let shared = 0;
+  for (const g of ga) if (gb.has(g)) shared++;
+  return shared / (ga.size + gb.size - shared);
 }
 
 /**
@@ -29,12 +37,7 @@ export function trigramSimilarity(a: string, b: string): number {
 export function normalizedSimilarity(na: string, nb: string): number {
   if (na === nb) return 1;
   if (!na || !nb) return 0;
-
-  const ga = trigrams(na);
-  const gb = trigrams(nb);
-  let shared = 0;
-  for (const g of ga) if (gb.has(g)) shared++;
-  return shared / (ga.size + gb.size - shared);
+  return jaccard(trigrams(na), trigrams(nb));
 }
 
 export function classifyMatch(score: number): MatchClass {
