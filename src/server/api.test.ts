@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Server, serve } from "bun";
@@ -21,6 +21,10 @@ beforeAll(() => {
   writeFileSync(join(mediaDir, "a.jpg"), "JPEGDATA");
   writeFileSync(join(mediaDir, "sub", "b c.png"), "PNGDATA");
   writeFileSync(join(root, "secret.txt"), "SECRET");
+  mkdirSync(join(root, "outside"));
+  writeFileSync(join(root, "outside", "secret.txt"), "SECRET");
+  symlinkSync(join(root, "secret.txt"), join(mediaDir, "link.txt"));
+  symlinkSync(join(root, "outside"), join(mediaDir, "linkdir"));
   server = serve({ port: 0, hostname: "127.0.0.1", routes: createRoutes(createTestDb()) });
 });
 
@@ -421,7 +425,51 @@ describe("GET /api/stats", () => {
   });
 });
 
+describe("cross-origin mutation guard", () => {
+  test("403 when Origin is another site", async () => {
+    const q = s.quote({ text: "guarded quote" });
+    const res = await fetch(url(`/api/quotes/${q.id}`), {
+      method: "PATCH",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: JSON.stringify({ notes: "pwned" }),
+    });
+    expectError({ status: res.status, body: await res.json() }, 403);
+    expect((await get(`/api/quotes/${q.id}`)).body.quote.notes).toBeNull();
+  });
+
+  test("415 when the body isn't sent as application/json", async () => {
+    const q = s.quote({ text: "guarded quote" });
+    const p = s.posting(q.id, {}, { status: "needs_review" });
+    const res = await fetch(url(`/api/review/${p.id}/${q.id}`), {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ action: "reject" }),
+    });
+    expectError({ status: res.status, body: await res.json() }, 415);
+    expect((await get("/api/review")).body.links).toHaveLength(1);
+  });
+
+  test("allows a same-origin request", async () => {
+    const q = s.quote({ text: "guarded quote" });
+    const res = await fetch(url(`/api/quotes/${q.id}`), {
+      method: "PATCH",
+      headers: { "content-type": "application/json; charset=utf-8", origin: server.url.origin },
+      body: JSON.stringify({ notes: "ok" }),
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("GET /media/*", () => {
+  test.each(["/media/link.txt", "/media/linkdir/secret.txt"])(
+    "refuses symlinks escaping the media dir: %s",
+    async (path) => {
+      const res = await fetch(url(path));
+      expect(res.status).toBe(403);
+      expect(await res.text()).not.toContain("SECRET");
+    },
+  );
+
   test("serves files from the media dir", async () => {
     const res = await fetch(url("/media/a.jpg"));
     expect(res.status).toBe(200);

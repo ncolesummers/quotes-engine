@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import type { BunRequest } from "bun";
 import { z } from "zod";
@@ -61,7 +61,30 @@ function parseQuery<T extends z.ZodType>(schema: T, req: Request): z.output<T> {
   return parse(schema, raw);
 }
 
+/**
+ * CSRF guard for mutations. Requiring `application/json` forces a CORS preflight for
+ * cross-origin browser requests (which this server never approves), and an `Origin` header,
+ * when present, must match the request's own host.
+ */
+function assertSameOriginJson(req: Request): void {
+  const origin = req.headers.get("origin");
+  if (origin !== null) {
+    let originHost: string | null = null;
+    try {
+      originHost = new URL(origin).host;
+    } catch {}
+    if (originHost !== req.headers.get("host")) {
+      throw new HttpError(403, "Cross-origin requests are not allowed");
+    }
+  }
+  const type = req.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (type !== "application/json") {
+    throw new HttpError(415, "Content-Type must be application/json");
+  }
+}
+
 async function parseBody<T extends z.ZodType>(schema: T, req: Request): Promise<z.output<T>> {
+  assertSameOriginJson(req);
   let body: unknown;
   try {
     body = await req.json();
@@ -151,13 +174,17 @@ async function mediaFile(mediaDir: string, req: Request): Promise<Response> {
     throw new HttpError(400, "Invalid path");
   }
   const base = resolve(mediaDir);
-  const full = resolve(base, rel);
-  if (rel.includes("\0") || !full.startsWith(base + sep)) {
+  if (rel.includes("\0") || !resolve(base, rel).startsWith(base + sep)) {
     throw new HttpError(403, "Forbidden");
   }
-  const info = await stat(full).catch(() => null);
+  // Symlinks are followed when serving, so check containment on canonical paths too.
+  const realBase = await realpath(base).catch(() => null);
+  const real = await realpath(resolve(base, rel)).catch(() => null);
+  if (!realBase || !real) throw new HttpError(404, "Not found");
+  if (!real.startsWith(realBase + sep)) throw new HttpError(403, "Forbidden");
+  const info = await stat(real).catch(() => null);
   if (!info?.isFile()) throw new HttpError(404, "Not found");
-  return new Response(Bun.file(full));
+  return new Response(Bun.file(real));
 }
 
 /** JSON API routes for `Bun.serve({ routes })`, plus `/media/*`. */
