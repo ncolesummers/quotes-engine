@@ -175,18 +175,26 @@ export function upsertQuote(db: Database, input: QuoteInput): UpsertQuoteResult 
   })();
 }
 
-/** Link a post to a quote. Idempotent: an existing link (and its status) is left untouched. */
+/**
+ * Link a post to a quote. Idempotent: an existing link (and its status) is left untouched.
+ * Returns the link's persisted status.
+ */
 export function linkPostQuote(
   db: Database,
   postId: number,
   quoteId: number,
   { method, confidence, status }: LinkOptions,
-): void {
-  db.query(
-    `INSERT INTO post_quotes (post_id, quote_id, method, confidence, status)
-     VALUES ($postId, $quoteId, $method, $confidence, $status)
-     ON CONFLICT (post_id, quote_id) DO NOTHING`,
-  ).run({ postId, quoteId, method, confidence, status });
+): LinkStatus {
+  const row = db
+    .query<{ status: LinkStatus }, Record<string, string | number | null>>(
+      `INSERT INTO post_quotes (post_id, quote_id, method, confidence, status)
+       VALUES ($postId, $quoteId, $method, $confidence, $status)
+       ON CONFLICT (post_id, quote_id) DO UPDATE SET status = status
+       RETURNING status`,
+    )
+    .get({ postId, quoteId, method, confidence, status });
+  if (!row) throw new Error(`linkPostQuote returned no row for post ${postId}, quote ${quoteId}`);
+  return row.status;
 }
 
 /**

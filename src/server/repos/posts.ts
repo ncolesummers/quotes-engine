@@ -78,6 +78,14 @@ export function getPost(db: Database, id: number): Post | null {
   });
 }
 
+export function getPostByIgMediaId(db: Database, igMediaId: string): Post | null {
+  return db
+    .query<Post, { igMediaId: string }>(
+      `SELECT ${POST_COLUMNS} FROM posts WHERE ig_media_id = $igMediaId`,
+    )
+    .get({ igMediaId });
+}
+
 /**
  * Store a metrics snapshot and update the post's current counts, unless the post already
  * holds counts captured later than `capturedAt`.
