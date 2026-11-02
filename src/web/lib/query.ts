@@ -16,6 +16,8 @@ export const queryKeys = {
     list: (params: BookListParams) => ["books", "list", params] as const,
     detail: (id: number) => ["books", "detail", id] as const,
   },
+  /** `GET /api/review`: needs_review links and likely duplicates. */
+  review: ["review"] as const,
 };
 
 /** Retry server/network failures once; a 4xx (e.g. a 404) won't change on retry. */

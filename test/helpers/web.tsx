@@ -170,6 +170,55 @@ export function bookEntry(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** One `links` item of `GET /api/review`. */
+export function reviewLink(
+  overrides: {
+    postId?: number;
+    quoteId?: number;
+    method?: "caption" | "image" | "manual";
+    confidence?: number | null;
+    post?: Record<string, unknown>;
+    quote?: Record<string, unknown>;
+  } = {},
+) {
+  const postId = overrides.postId ?? 1;
+  const quoteId = overrides.quoteId ?? 1;
+  return {
+    postId,
+    quoteId,
+    method: overrides.method ?? ("image" as const),
+    confidence: overrides.confidence === undefined ? 0.62 : overrides.confidence,
+    post: {
+      id: postId,
+      igMediaId: `ig_${postId}`,
+      permalink: `https://www.instagram.com/p/post${postId}/`,
+      caption: `Caption for post ${postId}`,
+      postedAt: "2026-01-01T12:00:00.000Z",
+      mediaUrl: `/media/${postId}.jpg`,
+      ...overrides.post,
+    },
+    quote: {
+      id: quoteId,
+      text: `EXTRACTED QUOTE ${quoteId}`,
+      author: null,
+      sourceTitle: null,
+      ...overrides.quote,
+    },
+  };
+}
+
+/** One quote of a `duplicates` pair of `GET /api/review`. */
+export function duplicateQuote(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    text: "The only way out is through.",
+    author: "Robert Frost",
+    sourceTitle: null,
+    postingCount: 1,
+    ...overrides,
+  };
+}
+
 /** Render `ui` inside a fresh QueryClient (no retries) and an in-memory wouter router. */
 export function renderWithProviders(ui: ReactNode, { path = "/" }: { path?: string } = {}) {
   const location = memoryLocation({ path, record: true });

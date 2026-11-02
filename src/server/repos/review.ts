@@ -82,9 +82,16 @@ export function listReviewLinks(db: Database): ReviewLink[] {
  *
  * An O(n²) scan with two exact shortcuts: trigram sets are built once per quote, and since
  * Jaccard(A, B) <= |A| / |B| for |A| <= |B|, quotes are visited in order of set size and the
- * inner loop stops once the size ratio alone rules out a "likely" score.
+ * inner loop stops once the size ratio alone rules out a "likely" score. Pairs dismissed with
+ * `dismissDuplicatePair` are left out.
  */
 export function findDuplicatePairs(db: Database): DuplicatePair[] {
+  const dismissed = new Set(
+    db
+      .query<{ key: string }, []>("SELECT a_id || '-' || b_id AS key FROM quote_not_duplicates")
+      .all()
+      .map((r) => r.key),
+  );
   const quotes = db
     .query<DuplicateQuote & { normalizedText: string }, []>(
       `SELECT q.id, q.text, q.author, q.source_title AS sourceTitle,
@@ -106,6 +113,7 @@ export function findDuplicatePairs(db: Database): DuplicatePair[] {
       if (classifyMatch(score) === "different") continue;
       const [a, b] =
         small.quote.id < large.quote.id ? [small.quote, large.quote] : [large.quote, small.quote];
+      if (dismissed.has(`${a.id}-${b.id}`)) continue;
       pairs.push({ a, b, score });
     }
   }
@@ -128,4 +136,19 @@ export function resolveLink(
       ? "UPDATE post_quotes SET status = 'confirmed' WHERE post_id = $postId AND quote_id = $quoteId"
       : "DELETE FROM post_quotes WHERE post_id = $postId AND quote_id = $quoteId";
   return db.query(sql).run(ids).changes > 0;
+}
+
+/**
+ * Record that two quotes are not duplicates, so `findDuplicatePairs` stops suggesting them.
+ * Order-independent and idempotent. Returns false when either quote doesn't exist.
+ */
+export function dismissDuplicatePair(db: Database, x: number, y: number): boolean {
+  if (x === y) throw new Error("A quote can't be a duplicate of itself");
+  const [aId, bId] = x < y ? [x, y] : [y, x];
+  const found = db
+    .query<{ n: number }, [number, number]>("SELECT COUNT(*) AS n FROM quotes WHERE id IN (?1, ?2)")
+    .get(aId, bId);
+  if (found?.n !== 2) return false;
+  db.query("INSERT OR IGNORE INTO quote_not_duplicates (a_id, b_id) VALUES (?1, ?2)").run(aId, bId);
+  return true;
 }

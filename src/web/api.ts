@@ -267,3 +267,65 @@ export function conflictIdOf(err: unknown): number | null {
   const id = err.details.conflictId;
   return typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
 }
+
+// ---------------------------------------------------------------------------
+// Review queue
+
+/** A `needs_review` post–quote link of `GET /api/review`. */
+export interface ReviewLink {
+  postId: number;
+  quoteId: number;
+  method: LinkMethod;
+  confidence: number | null;
+  post: {
+    id: number;
+    igMediaId: string;
+    permalink: string | null;
+    caption: string | null;
+    postedAt: string | null;
+    /** `/media/<file>` when the post's image was downloaded, else null. */
+    mediaUrl: string | null;
+  };
+  quote: { id: number; text: string; author: string | null; sourceTitle: string | null };
+}
+
+export interface DuplicateQuote {
+  id: number;
+  text: string;
+  author: string | null;
+  sourceTitle: string | null;
+  postingCount: number;
+}
+
+/** Two quotes that look like the same quote; `a` has the lower id. */
+export interface DuplicatePair {
+  a: DuplicateQuote;
+  b: DuplicateQuote;
+  /** Similarity of the normalized texts, 0–1. */
+  score: number;
+}
+
+export interface ReviewQueue {
+  links: ReviewLink[];
+  duplicates: DuplicatePair[];
+}
+
+export type ReviewAction = "confirm" | "reject";
+
+export function fetchReview(): Promise<ReviewQueue> {
+  return apiGet("/api/review");
+}
+
+/** Confirm a link (marks it confirmed) or reject it (deletes it). */
+export function resolveReviewLink(
+  postId: number,
+  quoteId: number,
+  action: ReviewAction,
+): Promise<{ postId: number; quoteId: number; action: ReviewAction }> {
+  return apiSend("POST", `/api/review/${postId}/${quoteId}`, { action });
+}
+
+/** Mark two quotes as not duplicates so the pair stops being suggested. */
+export function dismissDuplicate(aId: number, bId: number): Promise<{ aId: number; bId: number }> {
+  return apiSend("POST", "/api/review/duplicates/dismiss", { aId, bId });
+}

@@ -6,7 +6,12 @@ import { z } from "zod";
 import { getBookDetail, listBooks } from "./repos/books";
 import { getQuoteHighlights, listHighlights } from "./repos/highlights";
 import { getQuote, getQuoteDetail, mergeQuotes, searchQuotes, updateQuote } from "./repos/quotes";
-import { findDuplicatePairs, listReviewLinks, resolveLink } from "./repos/review";
+import {
+  dismissDuplicatePair,
+  findDuplicatePairs,
+  listReviewLinks,
+  resolveLink,
+} from "./repos/review";
 import { getStats } from "./repos/stats";
 
 export const DEFAULT_MEDIA_DIR = "data/media";
@@ -153,6 +158,10 @@ const booksQuery = z.object({
 
 const reviewBody = z.object({ action: z.enum(["confirm", "reject"]) });
 
+const dismissBody = z
+  .object({ aId: positiveInt, bId: positiveInt })
+  .refine((b) => b.aId !== b.bId, "aId and bId must be different quotes");
+
 /** URL for a media file stored relative to the media dir, or null. */
 export function mediaUrl(mediaPath: string | null): string | null {
   if (!mediaPath) return null;
@@ -278,6 +287,17 @@ export function createRoutes(
           duplicates: findDuplicatePairs(db),
         }),
       ),
+    },
+
+    "/api/review/duplicates/dismiss": {
+      POST: handle(async (req) => {
+        const body = await parseBody(dismissBody, req);
+        const [aId, bId] = body.aId < body.bId ? [body.aId, body.bId] : [body.bId, body.aId];
+        if (!dismissDuplicatePair(db, aId, bId)) {
+          throw new HttpError(404, `Quote ${aId} or ${bId} not found`);
+        }
+        return Response.json({ aId, bId });
+      }),
     },
 
     "/api/review/:postId/:quoteId": {

@@ -1,6 +1,13 @@
 import { useMutation } from "@tanstack/react-query";
 import { PencilIcon } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+  useId,
+  useImperativeHandle,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -23,6 +30,13 @@ export interface InlineEditProps {
   renderError?: (error: Error, draft: string) => ReactNode;
   inputClassName?: string;
   className?: string;
+  /** Lets a parent start editing, e.g. from a keyboard shortcut. */
+  editRef?: Ref<InlineEditHandle>;
+}
+
+export interface InlineEditHandle {
+  /** Switch to the input (no-op while already editing). */
+  edit(): void;
 }
 
 /**
@@ -42,6 +56,7 @@ export function InlineEdit({
   renderError,
   inputClassName,
   className,
+  editRef,
 }: InlineEditProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -58,6 +73,7 @@ export function InlineEdit({
     setDraft(value ?? "");
     setEditing(true);
   };
+  useImperativeHandle(editRef, () => ({ edit: () => (editing ? undefined : start()) }));
   const cancel = () => {
     mutation.reset();
     setEditing(false);
