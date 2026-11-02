@@ -168,66 +168,71 @@ export function resolveBook(
   const titleKey = bookTitleKey(title);
   if (!key || !titleKey) return null;
 
-  return db.transaction(() => {
-    // Apple Books rows copied by migration 0002 have no key until keyed; key them first so a
-    // caption import before `books:backfill` reuses them instead of creating a duplicate.
-    keyUnkeyedBooks(db);
-    if (assetId) {
-      const byAsset = bookForAsset(db, assetId);
-      if (byAsset) return { book: byAsset, created: false };
-    }
+  return db
+    .transaction(() => {
+      // Apple Books rows copied by migration 0002 have no key until keyed; key them first so a
+      // caption import before `books:backfill` reuses them instead of creating a duplicate.
+      keyUnkeyedBooks(db);
+      if (assetId) {
+        const byAsset = bookForAsset(db, assetId);
+        if (byAsset) return { book: byAsset, created: false };
+      }
 
-    // An existing book gains the asset id if it has none.
-    const adopt = (book: Book) => {
-      if (!assetId || book.assetId !== null) return { book, created: false };
-      db.query("UPDATE books SET asset_id = $assetId WHERE id = $id").run({ assetId, id: book.id });
-      return { book: requireBook(db, book.id), created: false };
-    };
+      // An existing book gains the asset id if it has none.
+      const adopt = (book: Book) => {
+        if (!assetId || book.assetId !== null) return { book, created: false };
+        db.query("UPDATE books SET asset_id = $assetId WHERE id = $id").run({
+          assetId,
+          id: book.id,
+        });
+        return { book: requireBook(db, book.id), created: false };
+      };
 
-    const exact = bookWhere(db, "b.normalized_key = $key", { key });
-    if (exact) return adopt(exact);
-    // The key of a book merged into another (e.g. "IQ84" into "1Q84").
-    const aliased = aliasedBook(db, "key", key);
-    if (aliased) return adopt(aliased);
+      const exact = bookWhere(db, "b.normalized_key = $key", { key });
+      if (exact) return adopt(exact);
+      // The key of a book merged into another (e.g. "IQ84" into "1Q84").
+      const aliased = aliasedBook(db, "key", key);
+      if (aliased) return adopt(aliased);
 
-    if (author) {
-      // A book known only by its title (e.g. from an unattributed caption) gains the author.
-      const bare = bookWhere(db, "b.normalized_key = $titleKey", { titleKey });
-      if (bare) {
-        db.query(
-          `UPDATE books SET author = $author, normalized_key = $key,
+      if (author) {
+        // A book known only by its title (e.g. from an unattributed caption) gains the author.
+        const bare = bookWhere(db, "b.normalized_key = $titleKey", { titleKey });
+        if (bare) {
+          db.query(
+            `UPDATE books SET author = $author, normalized_key = $key,
              asset_id = COALESCE(asset_id, $assetId)
            WHERE id = $id`,
-        ).run({ author, key, assetId, id: bare.id });
-        return { book: requireBook(db, bare.id), created: false };
-      }
-      // A title-only book merged into another (its key is an alias of the kept book).
-      const bareAlias = aliasedBook(db, "key", titleKey);
-      if (bareAlias) return adopt(bareAlias);
-    } else {
-      // No author: reuse the authored book with this title, if there's exactly one, counting
-      // books merged away under that title as the book they were merged into.
-      const authored = db
-        .query<Book, { prefix: string }>(
-          `SELECT ${BOOK_COLUMNS} FROM books b
+          ).run({ author, key, assetId, id: bare.id });
+          return { book: requireBook(db, bare.id), created: false };
+        }
+        // A title-only book merged into another (its key is an alias of the kept book).
+        const bareAlias = aliasedBook(db, "key", titleKey);
+        if (bareAlias) return adopt(bareAlias);
+      } else {
+        // No author: reuse the authored book with this title, if there's exactly one, counting
+        // books merged away under that title as the book they were merged into.
+        const authored = db
+          .query<Book, { prefix: string }>(
+            `SELECT ${BOOK_COLUMNS} FROM books b
            WHERE substr(b.normalized_key, 1, length($prefix)) = $prefix
               OR b.id IN (SELECT book_id FROM book_aliases
                           WHERE kind = 'key' AND substr(value, 1, length($prefix)) = $prefix)
            LIMIT 2`,
-        )
-        .all({ prefix: `${titleKey}|` });
-      if (authored.length === 1 && authored[0]) return adopt(authored[0]);
-    }
+          )
+          .all({ prefix: `${titleKey}|` });
+        if (authored.length === 1 && authored[0]) return adopt(authored[0]);
+      }
 
-    const inserted = db
-      .query<{ id: number }, Record<string, string | null>>(
-        `INSERT INTO books (asset_id, title, author, normalized_key, source)
+      const inserted = db
+        .query<{ id: number }, Record<string, string | null>>(
+          `INSERT INTO books (asset_id, title, author, normalized_key, source)
          VALUES ($assetId, $title, $author, $key, $source) RETURNING id`,
-      )
-      .get({ assetId, title, author, key, source });
-    if (!inserted) throw new Error("Book insert returned no row");
-    return { book: requireBook(db, inserted.id), created: true };
-  })();
+        )
+        .get({ assetId, title, author, key, source });
+      if (!inserted) throw new Error("Book insert returned no row");
+      return { book: requireBook(db, inserted.id), created: true };
+    })
+    .immediate();
 }
 
 /**
@@ -461,47 +466,49 @@ function keyUnkeyedBooks(db: Database): number {
  * 3. link remaining quotes by `source_title`/`author` (creating "caption" books).
  */
 export function backfillBooks(db: Database): BackfillSummary {
-  return db.transaction((): BackfillSummary => {
-    const summary: BackfillSummary = { booksKeyed: 0, booksCreated: 0, quotesLinked: 0 };
+  return db
+    .transaction((): BackfillSummary => {
+      const summary: BackfillSummary = { booksKeyed: 0, booksCreated: 0, quotesLinked: 0 };
 
-    summary.booksKeyed = keyUnkeyedBooks(db);
+      summary.booksKeyed = keyUnkeyedBooks(db);
 
-    const setBook = db.query<void, { id: number; bookId: number }>(
-      "UPDATE quotes SET book_id = $bookId WHERE id = $id",
-    );
-    // (`changes` would also count the FTS trigger's writes, so select first.)
-    const byHighlight = db
-      .query<{ id: number; bookId: number }, []>(
-        `SELECT q.id, (SELECT h.book_id FROM highlights h WHERE h.quote_id = q.id
+      const setBook = db.query<void, { id: number; bookId: number }>(
+        "UPDATE quotes SET book_id = $bookId WHERE id = $id",
+      );
+      // (`changes` would also count the FTS trigger's writes, so select first.)
+      const byHighlight = db
+        .query<{ id: number; bookId: number }, []>(
+          `SELECT q.id, (SELECT h.book_id FROM highlights h WHERE h.quote_id = q.id
            ORDER BY h.created_at, h.id LIMIT 1) AS bookId
          FROM quotes q
          WHERE q.book_id IS NULL AND EXISTS (SELECT 1 FROM highlights h WHERE h.quote_id = q.id)
          ORDER BY q.id`,
-      )
-      .all();
-    for (const q of byHighlight) {
-      setBook.run(q);
-      summary.quotesLinked++;
-    }
+        )
+        .all();
+      for (const q of byHighlight) {
+        setBook.run(q);
+        summary.quotesLinked++;
+      }
 
-    const bySource = db
-      .query<{ id: number; sourceTitle: string; author: string | null }, []>(
-        `SELECT id, source_title AS sourceTitle, author FROM quotes
+      const bySource = db
+        .query<{ id: number; sourceTitle: string; author: string | null }, []>(
+          `SELECT id, source_title AS sourceTitle, author FROM quotes
          WHERE book_id IS NULL AND trim(COALESCE(source_title, '')) != '' ORDER BY id`,
-      )
-      .all();
-    for (const q of bySource) {
-      const resolved = resolveBook(db, {
-        title: q.sourceTitle,
-        author: q.author,
-        source: "caption",
-      });
-      if (!resolved) continue;
-      setBook.run({ id: q.id, bookId: resolved.book.id });
-      summary.quotesLinked++;
-      if (resolved.created) summary.booksCreated++;
-    }
+        )
+        .all();
+      for (const q of bySource) {
+        const resolved = resolveBook(db, {
+          title: q.sourceTitle,
+          author: q.author,
+          source: "caption",
+        });
+        if (!resolved) continue;
+        setBook.run({ id: q.id, bookId: resolved.book.id });
+        summary.quotesLinked++;
+        if (resolved.created) summary.booksCreated++;
+      }
 
-    return summary;
-  })();
+      return summary;
+    })
+    .immediate();
 }

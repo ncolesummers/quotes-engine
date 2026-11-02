@@ -185,39 +185,41 @@ export function upsertQuote(db: Database, input: QuoteInput): UpsertQuoteResult 
   const normalized = normalizeQuote(input.text);
   if (!normalized) throw new Error("Quote text is empty after normalization");
 
-  return db.transaction((): UpsertQuoteResult => {
-    const exact = db
-      .query<{ id: number }, { normalized: string }>(
-        "SELECT id FROM quotes WHERE normalized_text = $normalized",
-      )
-      .get({ normalized });
-    const candidate = exact ? { id: exact.id, score: 1 } : bestCandidate(db, normalized);
-    const match = candidate ? classifyMatch(candidate.score) : "different";
+  return db
+    .transaction((): UpsertQuoteResult => {
+      const exact = db
+        .query<{ id: number }, { normalized: string }>(
+          "SELECT id FROM quotes WHERE normalized_text = $normalized",
+        )
+        .get({ normalized });
+      const candidate = exact ? { id: exact.id, score: 1 } : bestCandidate(db, normalized);
+      const match = candidate ? classifyMatch(candidate.score) : "different";
 
-    if (candidate && match === "same") {
-      return { quote: fillMissing(db, requireQuote(db, candidate.id), input), match: "existing" };
-    }
+      if (candidate && match === "same") {
+        return { quote: fillMissing(db, requireQuote(db, candidate.id), input), match: "existing" };
+      }
 
-    const inserted = db
-      .query<{ id: number }, Record<string, string | number | null>>(
-        `INSERT INTO quotes (text, normalized_text, author, source_title, book_id)
+      const inserted = db
+        .query<{ id: number }, Record<string, string | number | null>>(
+          `INSERT INTO quotes (text, normalized_text, author, source_title, book_id)
          VALUES ($text, $normalized, $author, $sourceTitle, $bookId) RETURNING id`,
-      )
-      .get({
-        text: input.text.trim(),
-        normalized,
-        author: input.author ?? null,
-        sourceTitle: input.sourceTitle ?? null,
-        bookId: resolveBookId(db, input.sourceTitle, input.author, input.bookSource),
-      });
-    if (!inserted) throw new Error("Quote insert returned no row");
-    const quote = requireQuote(db, inserted.id);
+        )
+        .get({
+          text: input.text.trim(),
+          normalized,
+          author: input.author ?? null,
+          sourceTitle: input.sourceTitle ?? null,
+          bookId: resolveBookId(db, input.sourceTitle, input.author, input.bookSource),
+        });
+      if (!inserted) throw new Error("Quote insert returned no row");
+      const quote = requireQuote(db, inserted.id);
 
-    if (candidate && match === "likely") {
-      return { quote, match: "likely", candidateId: candidate.id };
-    }
-    return { quote, match: "new" };
-  })();
+      if (candidate && match === "likely") {
+        return { quote, match: "likely", candidateId: candidate.id };
+      }
+      return { quote, match: "new" };
+    })
+    .immediate();
 }
 
 /**
@@ -356,35 +358,37 @@ export function getQuoteDetail(db: Database, id: number): QuoteDetail | null {
  */
 export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote {
   if (keepId === dropId) throw new Error("Cannot merge a quote into itself");
-  return db.transaction((): Quote => {
-    requireQuote(db, keepId);
-    requireQuote(db, dropId);
-    const ids = { keepId, dropId };
-    db.query(
-      `INSERT OR IGNORE INTO post_quotes (post_id, quote_id, method, confidence, status)
+  return db
+    .transaction((): Quote => {
+      requireQuote(db, keepId);
+      requireQuote(db, dropId);
+      const ids = { keepId, dropId };
+      db.query(
+        `INSERT OR IGNORE INTO post_quotes (post_id, quote_id, method, confidence, status)
        SELECT post_id, $keepId, method, confidence, status FROM post_quotes WHERE quote_id = $dropId`,
-    ).run(ids);
-    db.query("UPDATE highlights SET quote_id = $keepId WHERE quote_id = $dropId").run(ids);
-    // "Not a duplicate" verdicts against the dropped quote now apply to the kept one (#17).
-    db.query(
-      `INSERT OR IGNORE INTO quote_not_duplicates (a_id, b_id)
+      ).run(ids);
+      db.query("UPDATE highlights SET quote_id = $keepId WHERE quote_id = $dropId").run(ids);
+      // "Not a duplicate" verdicts against the dropped quote now apply to the kept one (#17).
+      db.query(
+        `INSERT OR IGNORE INTO quote_not_duplicates (a_id, b_id)
        SELECT MIN($keepId, other), MAX($keepId, other) FROM (
          SELECT CASE WHEN a_id = $dropId THEN b_id ELSE a_id END AS other
          FROM quote_not_duplicates WHERE $dropId IN (a_id, b_id)
        ) WHERE other != $keepId`,
-    ).run(ids);
-    db.query(
-      `UPDATE quotes SET
+      ).run(ids);
+      db.query(
+        `UPDATE quotes SET
          author = COALESCE(author, (SELECT author FROM quotes WHERE id = $dropId)),
          source_title = COALESCE(source_title, (SELECT source_title FROM quotes WHERE id = $dropId)),
          notes = COALESCE(notes, (SELECT notes FROM quotes WHERE id = $dropId)),
          book_id = COALESCE(book_id, (SELECT book_id FROM quotes WHERE id = $dropId)),
          updated_at = ${NOW_SQL}
        WHERE id = $keepId`,
-    ).run(ids);
-    db.query("DELETE FROM quotes WHERE id = $dropId").run({ dropId });
-    return requireQuote(db, keepId);
-  })();
+      ).run(ids);
+      db.query("DELETE FROM quotes WHERE id = $dropId").run({ dropId });
+      return requireQuote(db, keepId);
+    })
+    .immediate();
 }
 
 export interface QuotePatch {
@@ -436,44 +440,46 @@ function relinkedBookId(
  * `normalized_text` recomputed; it must not normalize to empty or collide with another quote.
  */
 export function updateQuote(db: Database, id: number, patch: QuotePatch): UpdateQuoteResult {
-  return db.transaction((): UpdateQuoteResult => {
-    const current = getQuote(db, id);
-    if (!current) return { status: "not_found" };
-    const sets: string[] = [];
-    const binds: Record<string, string | number | null> = { id };
+  return db
+    .transaction((): UpdateQuoteResult => {
+      const current = getQuote(db, id);
+      if (!current) return { status: "not_found" };
+      const sets: string[] = [];
+      const binds: Record<string, string | number | null> = { id };
 
-    if (patch.text !== undefined) {
-      const normalized = normalizeQuote(patch.text);
-      if (!normalized) return { status: "empty_text" };
-      const clash = db
-        .query<{ id: number }, { normalized: string; id: number }>(
-          "SELECT id FROM quotes WHERE normalized_text = $normalized AND id != $id",
-        )
-        .get({ normalized, id });
-      if (clash) return { status: "conflict", conflictId: clash.id };
-      sets.push("text = $text", "normalized_text = $normalized");
-      binds.text = patch.text.trim();
-      binds.normalized = normalized;
-    }
-    for (const [key, column] of PATCH_COLUMNS) {
-      const value = patch[key];
-      if (value === undefined) continue;
-      sets.push(`${column} = $${key}`);
-      binds[key] = value;
-    }
-    const bookId = relinkedBookId(db, current, patch);
-    if (bookId !== undefined) {
-      sets.push("book_id = $bookId");
-      binds.bookId = bookId;
-    }
-    if (sets.length) {
-      db.query(`UPDATE quotes SET ${sets.join(", ")}, updated_at = ${NOW_SQL} WHERE id = $id`).run(
-        binds,
-      );
-    }
-    if (bookId !== undefined && current.bookId !== null && bookId !== current.bookId) {
-      deleteBookIfEmpty(db, current.bookId);
-    }
-    return { status: "updated", quote: requireQuote(db, id) };
-  })();
+      if (patch.text !== undefined) {
+        const normalized = normalizeQuote(patch.text);
+        if (!normalized) return { status: "empty_text" };
+        const clash = db
+          .query<{ id: number }, { normalized: string; id: number }>(
+            "SELECT id FROM quotes WHERE normalized_text = $normalized AND id != $id",
+          )
+          .get({ normalized, id });
+        if (clash) return { status: "conflict", conflictId: clash.id };
+        sets.push("text = $text", "normalized_text = $normalized");
+        binds.text = patch.text.trim();
+        binds.normalized = normalized;
+      }
+      for (const [key, column] of PATCH_COLUMNS) {
+        const value = patch[key];
+        if (value === undefined) continue;
+        sets.push(`${column} = $${key}`);
+        binds[key] = value;
+      }
+      const bookId = relinkedBookId(db, current, patch);
+      if (bookId !== undefined) {
+        sets.push("book_id = $bookId");
+        binds.bookId = bookId;
+      }
+      if (sets.length) {
+        db.query(
+          `UPDATE quotes SET ${sets.join(", ")}, updated_at = ${NOW_SQL} WHERE id = $id`,
+        ).run(binds);
+      }
+      if (bookId !== undefined && current.bookId !== null && bookId !== current.bookId) {
+        deleteBookIfEmpty(db, current.bookId);
+      }
+      return { status: "updated", quote: requireQuote(db, id) };
+    })
+    .immediate();
 }

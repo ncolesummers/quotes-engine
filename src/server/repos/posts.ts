@@ -107,7 +107,7 @@ export function recordMetrics(
       `UPDATE posts SET like_count = $likes, comments_count = $comments, metrics_updated_at = $at
        WHERE id = $postId AND (metrics_updated_at IS NULL OR metrics_updated_at <= $at)`,
     ).run({ postId, at, likes, comments });
-  })();
+  }).immediate();
 }
 
 /** Posts not yet run through quote extraction, oldest first. */
