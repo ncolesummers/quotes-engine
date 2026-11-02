@@ -18,7 +18,10 @@ export function AppRoutes() {
   return (
     <Switch>
       <Route path="/" component={SearchPage} />
-      <Route path="/quotes/:id">{(params) => <QuoteDetailPage id={params.id} />}</Route>
+      <Route path="/quotes/:id">
+        {/* Keyed so another quote starts fresh (no drafts or dialog state carried over). */}
+        {(params) => <QuoteDetailPage key={params.id} id={params.id} />}
+      </Route>
       <Route path="/books" component={BooksPlaceholder} />
       <Route path="/highlights">
         <PlaceholderPage title="Highlights">

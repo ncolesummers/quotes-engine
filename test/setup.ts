@@ -8,6 +8,8 @@ const native = {
   Headers: globalThis.Headers,
 };
 
-GlobalRegistrator.register();
+// A real base URL so relative URLs (e.g. `<img src="/media/x.jpg">`) parse; on about:blank
+// happy-dom fires `error` on every such image.
+GlobalRegistrator.register({ url: "http://localhost/" });
 
 Object.assign(globalThis, native);

@@ -1,4 +1,5 @@
 import { ExternalLinkIcon, HeartIcon, ImageOffIcon, MessageCircleIcon } from "lucide-react";
+import { useState } from "react";
 import type { LinkMethod, Posting } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatNumber } from "@/lib/format";
@@ -42,9 +43,11 @@ function Metric({
 }
 
 function Thumbnail({ posting, date }: { posting: Posting; date: string | null }) {
+  // A media file missing on disk 404s; show the placeholder instead of a broken image.
+  const [failed, setFailed] = useState(false);
   const frame =
     "size-20 shrink-0 overflow-hidden rounded-md border border-border/70 bg-muted sm:size-24";
-  if (!posting.mediaUrl) {
+  if (!posting.mediaUrl || failed) {
     return (
       <div aria-hidden className={cn(frame, "flex items-center justify-center")}>
         <ImageOffIcon className="size-5 text-muted-foreground/60" />
@@ -56,6 +59,7 @@ function Thumbnail({ posting, date }: { posting: Posting; date: string | null })
       src={posting.mediaUrl}
       alt={date ? `Instagram post from ${date}` : "Instagram post"}
       loading="lazy"
+      onError={() => setFailed(true)}
       className={cn(frame, "object-cover")}
     />
   );

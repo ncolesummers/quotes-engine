@@ -44,6 +44,13 @@ describe("apiGet", () => {
     expect((err as ApiError).message).toBe("q: too long");
   });
 
+  test("keeps extra fields of the error body as details", async () => {
+    fetchMock = mockFetch(() => json({ error: "Text duplicates quote 9", conflictId: 9 }, 409));
+    const err = (await apiGet("/api/quotes/1").catch((e: unknown) => e)) as ApiError;
+    expect(err.status).toBe(409);
+    expect(err.details).toEqual({ conflictId: 9 });
+  });
+
   test("falls back to the status text when the body is not JSON", async () => {
     fetchMock = mockFetch(() => new Response("boom", { status: 502, statusText: "Bad Gateway" }));
     const err = (await apiGet("/api/stats").catch((e: unknown) => e)) as ApiError;

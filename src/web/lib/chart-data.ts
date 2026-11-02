@@ -8,6 +8,8 @@ export interface ChartPoint {
   label: string;
   /** Formatted posting date, or "—" when unknown. */
   date: string;
+  /** X-axis tick: "#1 · Jan 5, 2025" (kept in the data so skipped ticks can't misalign). */
+  axisLabel: string;
   likes: number | null;
   comments: number | null;
   /** Absolute change vs. the first posting; null when either value is missing. */
@@ -42,10 +44,13 @@ export function toChartData(
   return postings.map((p, i) => {
     const [likesDelta, likesDeltaPct] = delta(p.likes, first?.likes ?? null);
     const [commentsDelta, commentsDeltaPct] = delta(p.comments, first?.comments ?? null);
+    const label = `#${i + 1}`;
+    const date = formatDate(p.postedAt) ?? "—";
     return {
       postId: p.postId,
-      label: `#${i + 1}`,
-      date: formatDate(p.postedAt) ?? "—",
+      label,
+      date,
+      axisLabel: `${label} · ${date}`,
       likes: p.likes,
       comments: p.comments,
       likesDelta,
@@ -61,9 +66,12 @@ function signed(n: number, suffix = ""): string {
   return `${n > 0 ? "+" : "−"}${formatNumber(Math.abs(n))}${suffix}`;
 }
 
-/** "+50 (+50%)", "−6 (−60%)", "+12" (no baseline %), "±0", or "—" when unknown. */
+/** "+50 (+50%)", "−6 (−60%)", "+1 (+<1%)", "+12" (no baseline %), "±0", or "—" when unknown. */
 export function formatDelta(diff: number | null, pct: number | null): string {
   if (diff === null) return "—";
   if (diff === 0) return signed(0);
-  return pct === null ? signed(diff) : `${signed(diff)} (${signed(Math.round(pct), "%")})`;
+  if (pct === null) return signed(diff);
+  const rounded = Math.round(pct);
+  const pctText = rounded === 0 ? `${diff > 0 ? "+" : "−"}<1%` : signed(rounded, "%");
+  return `${signed(diff)} (${pctText})`;
 }

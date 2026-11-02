@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeftIcon, SearchIcon } from "lucide-react";
 import { useId, useState } from "react";
-import { fetchQuotes, type QuoteDetail, type QuoteSearchItem } from "@/api";
+import { fetchQuoteDetail, fetchQuotes, type QuoteDetail } from "@/api";
 import { PostedBadge } from "@/components/PostedBadge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,10 @@ import { queryKeys } from "@/lib/query";
 
 export const MERGE_SEARCH_DEBOUNCE_MS = 250;
 const MERGE_SEARCH_LIMIT = 8;
+/** The server rejects longer `q` values (src/server/api.ts). */
+const MAX_QUERY_LENGTH = 500;
+
+type MergeCandidate = { id: number; text: string; author: string | null };
 
 export interface MergeQuoteDialogProps {
   open: boolean;
@@ -26,6 +30,8 @@ export interface MergeQuoteDialogProps {
   keepId: number;
   /** Prefills the search (e.g. with a draft that collided with another quote). */
   initialQuery?: string;
+  /** Opens straight on confirming this quote (e.g. the one a 409 named). */
+  preselectId?: number;
   /** POSTs the merge; resolves to the kept quote's refreshed detail. */
   onMerge: (dropId: number) => Promise<QuoteDetail>;
 }
@@ -45,11 +51,13 @@ export function MergeQuoteDialog({ open, onOpenChange, ...rest }: MergeQuoteDial
 function MergeQuoteBody({
   keepId,
   initialQuery = "",
+  preselectId,
   onMerge,
   onDone,
 }: Omit<MergeQuoteDialogProps, "open" | "onOpenChange"> & { onDone: () => void }) {
-  const [draft, setDraft] = useState(initialQuery);
-  const [selected, setSelected] = useState<QuoteSearchItem | null>(null);
+  const [draft, setDraft] = useState(initialQuery.slice(0, MAX_QUERY_LENGTH));
+  const [picked, setPicked] = useState<MergeCandidate | null>(null);
+  const [usePreselect, setUsePreselect] = useState(preselectId !== undefined);
   const inputId = useId();
   const q = useDebouncedValue(draft.trim(), MERGE_SEARCH_DEBOUNCE_MS);
 
@@ -59,6 +67,14 @@ function MergeQuoteBody({
     enabled: q !== "",
   });
   const candidates = (search.data?.items ?? []).filter((item) => item.id !== keepId);
+
+  const preselect = useQuery({
+    queryKey: queryKeys.quotes.detail(preselectId ?? 0),
+    queryFn: () => fetchQuoteDetail(preselectId as number),
+    enabled: usePreselect && preselectId !== undefined && preselectId !== keepId,
+  });
+  // If the preselected quote can't be loaded, the (prefilled) search is the fallback.
+  const selected = picked ?? (usePreselect ? (preselect.data?.quote ?? null) : null);
 
   const merge = useMutation({ mutationFn: onMerge, onSuccess: onDone });
 
@@ -90,7 +106,8 @@ function MergeQuoteBody({
             variant="ghost"
             onClick={() => {
               merge.reset();
-              setSelected(null);
+              setPicked(null);
+              setUsePreselect(false);
             }}
             disabled={merge.isPending}
           >
@@ -128,6 +145,7 @@ function MergeQuoteBody({
           type="search"
           autoFocus
           autoComplete="off"
+          maxLength={MAX_QUERY_LENGTH}
           placeholder="Search a line, an author, a book…"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -155,7 +173,7 @@ function MergeQuoteBody({
               <li key={item.id}>
                 <button
                   type="button"
-                  onClick={() => setSelected(item)}
+                  onClick={() => setPicked(item)}
                   className="w-full rounded-lg border border-border/70 bg-card px-4 py-3 text-left transition-colors outline-none hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 >
                   <span className="line-clamp-3 font-serif leading-snug">{item.text}</span>

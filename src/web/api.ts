@@ -12,6 +12,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Other fields of the `{ error, ... }` body, e.g. `{ conflictId }` on a 409. */
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "ApiError";
@@ -40,11 +42,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // Non-JSON body (e.g. a proxy error page); handled below.
   }
   if (!res.ok) {
+    const { error, ...details } =
+      body && typeof body === "object" ? (body as Record<string, unknown>) : {};
     const message =
-      body && typeof body === "object" && "error" in body && typeof body.error === "string"
-        ? body.error
-        : `Request failed: ${res.status} ${res.statusText}`.trim();
-    throw new ApiError(res.status, message);
+      typeof error === "string" ? error : `Request failed: ${res.status} ${res.statusText}`.trim();
+    throw new ApiError(res.status, message, details);
   }
   return body as T;
 }
@@ -172,7 +174,10 @@ export function fetchQuoteDetail(id: number): Promise<QuoteDetail> {
   return apiGet(`/api/quotes/${id}`);
 }
 
-/** PATCH a quote. Rejects with `ApiError` status 409 when `text` duplicates another quote. */
+/**
+ * PATCH a quote. Rejects with `ApiError` status 409 when `text` duplicates another quote;
+ * `conflictIdOf(err)` then names that quote.
+ */
 export async function updateQuote(id: number, patch: QuotePatch): Promise<Quote> {
   const { quote } = await apiSend<{ quote: Quote }>("PATCH", `/api/quotes/${id}`, patch);
   return quote;
@@ -181,4 +186,11 @@ export async function updateQuote(id: number, patch: QuotePatch): Promise<Quote>
 /** Merge `dropId` into `keepId` (drop is deleted); resolves to keep's refreshed detail. */
 export function mergeQuote(keepId: number, dropId: number): Promise<QuoteDetail> {
   return apiSend("POST", `/api/quotes/${keepId}/merge`, { dropId });
+}
+
+/** The quote a 409 from `updateQuote` collided with, or null. */
+export function conflictIdOf(err: unknown): number | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const id = err.details.conflictId;
+  return typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
 }

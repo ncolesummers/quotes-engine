@@ -15,6 +15,7 @@ describe("toChartData", () => {
         postId: 10,
         label: "#1",
         date: "Jan 5, 2025",
+        axisLabel: "#1 · Jan 5, 2025",
         likes: 100,
         comments: 10,
         likesDelta: 0,
@@ -26,6 +27,7 @@ describe("toChartData", () => {
         postId: 11,
         label: "#2",
         date: "Jun 1, 2025",
+        axisLabel: "#2 · Jun 1, 2025",
         likes: 150,
         comments: 4,
         likesDelta: 50,
@@ -37,6 +39,7 @@ describe("toChartData", () => {
         postId: 12,
         label: "#3",
         date: "Feb 10, 2026",
+        axisLabel: "#3 · Feb 10, 2026",
         likes: 80,
         comments: 10,
         likesDelta: -20,
@@ -90,6 +93,11 @@ describe("formatDelta", () => {
 
   test("rounds percentages to whole numbers", () => {
     expect(formatDelta(1, 33.3333)).toBe("+1 (+33%)");
+  });
+
+  test("a non-zero change under 1% is not shown as ±0%", () => {
+    expect(formatDelta(1, 0.1)).toBe("+1 (+<1%)");
+    expect(formatDelta(-1, -0.1)).toBe("−1 (−<1%)");
   });
 });
 

@@ -4,6 +4,7 @@ import { useId, useMemo, useState } from "react";
 import { Link } from "wouter";
 import {
   ApiError,
+  conflictIdOf,
   fetchQuoteDetail,
   mergeQuote,
   type QuoteDetail,
@@ -76,7 +77,10 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
   const queryClient = useQueryClient();
   const headingId = useId();
   const postingsHeadingId = useId();
-  const [merge, setMerge] = useState<{ open: boolean; query: string }>({ open: false, query: "" });
+  const [merge, setMerge] = useState<{ open: boolean; query: string; preselectId?: number }>({
+    open: false,
+    query: "",
+  });
 
   const query = useQuery({
     queryKey: queryKeys.quotes.detail(id ?? 0),
@@ -89,14 +93,15 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
 
   if (id === null || isNotFound(query.error)) return <NotFound />;
   if (query.isPending) return <DetailSkeleton />;
-  if (query.isError) {
+  // A failed background refetch keeps the loaded data; only show the error when there is none.
+  if (query.data === undefined) {
     return (
       <div
         role="alert"
         className="my-8 rounded-xl border border-destructive/40 bg-destructive/5 px-6 py-8 text-center"
       >
         <p className="font-serif text-lg">This quote couldn’t be loaded.</p>
-        <p className="mt-1 text-sm text-muted-foreground">{query.error.message}</p>
+        <p className="mt-1 text-sm text-muted-foreground">{query.error?.message}</p>
         <Button variant="outline" size="sm" className="mt-4" onClick={() => query.refetch()}>
           Try again
         </Button>
@@ -173,7 +178,13 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setMerge({ open: true, query: draft })}
+                      onClick={() =>
+                        setMerge({
+                          open: true,
+                          query: draft,
+                          preselectId: conflictIdOf(error) ?? undefined,
+                        })
+                      }
                     >
                       Merge instead
                     </Button>
@@ -249,6 +260,7 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
         onOpenChange={(open) => setMerge((m) => ({ ...m, open }))}
         keepId={id}
         initialQuery={merge.query}
+        preselectId={merge.preselectId}
         onMerge={onMerge}
       />
     </div>

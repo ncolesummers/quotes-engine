@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { AppRoutes } from "@/routes";
 import {
   json,
   type MockedFetch,
@@ -109,6 +110,46 @@ describe("QuoteDetailPage", () => {
     await screen.findByText("So it goes.");
   });
 
+  test("a failed background refetch keeps the loaded quote on screen", async () => {
+    let fail = false;
+    fetchMock = mockFetch(() =>
+      fail ? json({ error: "boom" }, 500) : json(quoteDetail({ quote: { id: 7 } })),
+    );
+    const { queryClient } = renderPage();
+    await screen.findByText("So it goes.");
+
+    fail = true;
+    await act(() => queryClient.refetchQueries());
+    await act(() => new Promise<void>((r) => setTimeout(r, 20)));
+    expect(screen.getByText("So it goes.")).toBeDefined();
+    expect(screen.queryByText(/couldn.t be loaded/i)).toBeNull();
+  });
+
+  test("navigating to another quote resets open edits", async () => {
+    fetchMock = mockFetch((url) => {
+      const id = Number(url.pathname.split("/").pop());
+      return json(quoteDetail({ quote: { id, text: `Quote ${id} text.` } }));
+    });
+    const { location, queryClient } = renderWithProviders(<AppRoutes />, { path: "/quotes/1" });
+    await screen.findByText("Quote 1 text.");
+    fireEvent.click(screen.getByRole("button", { name: /edit text/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /quote text/i }), {
+      target: { value: "Draft for quote 1." },
+    });
+
+    act(() => {
+      // Quote 2 already cached (e.g. back/forward), so no loading state remounts the page.
+      queryClient.setQueryData(
+        ["quotes", "detail", 2],
+        quoteDetail({ quote: { id: 2, text: "Quote 2 text." } }),
+      );
+      location.navigate("/quotes/2");
+    });
+    await screen.findByText("Quote 2 text.");
+    // Quote 1's draft must not survive (Save would PATCH it onto quote 2).
+    expect(screen.queryByRole("textbox", { name: /quote text/i })).toBeNull();
+  });
+
   describe("postings timeline", () => {
     test("renders N postings in date order with metrics, thumbnail and permalink", async () => {
       fetchMock = mockFetch(() => json(quoteDetail({ quote: { id: 7 }, postings: threePostings })));
@@ -143,6 +184,15 @@ describe("QuoteDetailPage", () => {
       expect(within(flagged[0] as HTMLElement).getByText(/needs review/i)).toBeDefined();
       expect(within(flagged[0] as HTMLElement).getByText(/image/i)).toBeDefined();
       expect(within(items[0] as HTMLElement).queryByText(/needs review/i)).toBeNull();
+    });
+
+    test("a thumbnail that fails to load falls back to the placeholder", async () => {
+      fetchMock = mockFetch(() => json(quoteDetail({ quote: { id: 7 } })));
+      renderPage();
+      const list = await screen.findByRole("list", { name: /postings/i });
+      const img = within(list).getByRole("img");
+      fireEvent.error(img);
+      expect(within(list).queryByRole("img")).toBeNull();
     });
 
     test("a posting without media or permalink still renders", async () => {
@@ -319,6 +369,21 @@ describe("QuoteDetailPage", () => {
       });
     });
 
+    test("Enter that confirms an IME composition does not save", async () => {
+      fetchMock = mockFetch(() => json(quoteDetail({ quote: { id: 7 } })));
+      renderPage();
+      await screen.findByText("So it goes.");
+      fireEvent.click(screen.getByRole("button", { name: /edit author/i }));
+      const input = screen.getByRole("textbox", { name: /author/i });
+      fireEvent.change(input, { target: { value: "村上" } });
+      fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+      fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+      await act(() => new Promise<void>((r) => setTimeout(r, 20)));
+
+      expect(screen.getByRole("textbox", { name: /author/i })).toBeDefined();
+      expect(indexOfCall("PATCH", "/api/quotes/7")).toBe(-1);
+    });
+
     test("cancel discards the draft without a request", async () => {
       fetchMock = mockFetch(() => json(quoteDetail({ quote: { id: 7 } })));
       renderPage();
@@ -334,9 +399,15 @@ describe("QuoteDetailPage", () => {
       expect(indexOfCall("PATCH", "/api/quotes/7")).toBe(-1);
     });
 
-    test("a 409 on text offers a merge instead", async () => {
+    test("a 409 on text offers to merge the conflicting quote", async () => {
       fetchMock = mockFetch((url, init) => {
-        if (init?.method === "PATCH") return json({ error: "Text duplicates quote 9" }, 409);
+        if (init?.method === "PATCH") {
+          return json({ error: "Text duplicates quote 9", conflictId: 9 }, 409);
+        }
+        if (url.pathname === "/api/quotes/7/merge") return json(quoteDetail({ quote: { id: 7 } }));
+        if (url.pathname === "/api/quotes/9") {
+          return json(quoteDetail({ quote: { id: 9, text: "The duplicate one." } }));
+        }
         if (url.pathname === "/api/quotes") return json({ items: [], total: 0 });
         return json(quoteDetail({ quote: { id: 7 } }));
       });
@@ -357,10 +428,41 @@ describe("QuoteDetailPage", () => {
       ).toBe("Duplicate text.");
 
       fireEvent.click(within(alert).getByRole("button", { name: /merge/i }));
+      const d = within(await screen.findByRole("dialog"));
+      // Straight to confirming the quote the server named, no searching needed.
+      expect(await d.findByText("The duplicate one.")).toBeDefined();
+      fireEvent.click(d.getByRole("button", { name: /merge into this quote/i }));
+      await act(() => new Promise<void>((r) => setTimeout(r, 50)));
+      expect(bodyOf(indexOfCall("POST", "/api/quotes/7/merge"))).toEqual({ dropId: 9 });
+    });
+
+    test("a 409 without a conflict id prefills the search, clipped to the server limit", async () => {
+      const long = `${"word ".repeat(120)}end`;
+      fetchMock = mockFetch((url, init) => {
+        if (init?.method === "PATCH") return json({ error: "Text duplicates quote 9" }, 409);
+        if (url.pathname === "/api/quotes") return json({ items: [], total: 0 });
+        return json(quoteDetail({ quote: { id: 7 } }));
+      });
+      renderPage();
+
+      await screen.findByText("So it goes.");
+      fireEvent.click(screen.getByRole("button", { name: /edit text/i }));
+      fireEvent.change(screen.getByRole("textbox", { name: /quote text/i }), {
+        target: { value: long },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+      const alert = await screen.findByRole("alert");
+      fireEvent.click(within(alert).getByRole("button", { name: /merge/i }));
       const dialog = await screen.findByRole("dialog");
-      expect(
-        (within(dialog).getByRole("searchbox", { name: /search/i }) as HTMLInputElement).value,
-      ).toBe("Duplicate text.");
+      const value = (within(dialog).getByRole("searchbox", { name: /search/i }) as HTMLInputElement)
+        .value;
+      expect(value.length).toBeLessThanOrEqual(500);
+      expect(long.startsWith(value)).toBe(true);
+      await waitFor(() => expect(fetchMock?.callsTo("/api/quotes").length).toBeGreaterThan(0));
+      for (const u of fetchMock?.callsTo("/api/quotes") ?? []) {
+        expect((u.searchParams.get("q") ?? "").length).toBeLessThanOrEqual(500);
+      }
     });
   });
 

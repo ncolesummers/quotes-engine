@@ -71,6 +71,8 @@ export function InlineEdit({
     mutation.mutate(next);
   };
   const onKeyDown = (e: KeyboardEvent) => {
+    // Enter/Escape while an IME is composing belong to the IME (229: Safari's composing code).
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
       e.preventDefault();
       cancel();

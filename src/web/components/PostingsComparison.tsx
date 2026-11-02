@@ -69,13 +69,7 @@ export function PostingsComparison({ data }: { data: ChartPoint[] }) {
         >
           <BarChart data={data} margin={{ top: 8, right: 4, left: 4, bottom: 0 }} barGap={4}>
             <CartesianGrid vertical={false} strokeDasharray="2 4" />
-            <XAxis
-              dataKey="label"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={(label: string, i: number) => `${label} · ${data[i]?.date ?? ""}`}
-            />
+            <XAxis dataKey="axisLabel" tickLine={false} axisLine={false} tickMargin={8} />
             <YAxis yAxisId="likes" tickLine={false} axisLine={false} width={44} />
             <YAxis
               yAxisId="comments"
