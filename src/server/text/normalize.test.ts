@@ -70,6 +70,20 @@ describe("normalizeQuote", () => {
     ["hashtag right after punctuation", "Know thyself.#wisdom", "know thyself"],
     ["hashtag right after emoji", "Know thyself \u{1F525}#wisdom", "know thyself"],
     ["adjacent hashtags", "Know thyself #wisdom#quotes", "know thyself"],
+    [
+      "non-Latin hashtag with combining marks",
+      "Know thyself #\u092A\u094D\u0930\u0947\u0930\u0923\u093E",
+      "know thyself",
+    ],
+    ["hashtag after combining mark is not split", "\u0915\u093E#tag", "\u0915\u093E tag"],
+    ["emoji that NFKC turns into letters", "Know thyself \u2139\uFE0F", "know thyself"],
+    ["trade mark emoji", "Know thyself \u2122\uFE0F", "know thyself"],
+    ["emoji glued before a hashtag", "Know thyself\u{1F525}#wisdom", "know thyself"],
+    [
+      "source dash does not leak into normalized text",
+      "Know thyself. \u2014 Socrates, Dialogues \u2013 Book II",
+      "know thyself",
+    ],
     ["keycap emoji removed", "Know thyself 1\uFE0F\u20E3", "know thyself"],
     ["keycap emoji without selector removed", "Know thyself #\u20E3", "know thyself"],
     ["acute accent used as apostrophe", "Don\u00B4t stop", "dont stop"],
@@ -221,6 +235,25 @@ describe("parseAttribution", () => {
       "all-caps quote with attribution after closing quote",
       "\u201CKNOW THYSELF\u201D \u2014 SOCRATES",
       { text: "KNOW THYSELF", author: "SOCRATES" },
+    ],
+    [
+      "separator inside the source belongs to the source",
+      "Know thyself. \u2014 Socrates, Dialogues \u2013 Book II",
+      { text: "Know thyself.", author: "Socrates", source: "Dialogues \u2013 Book II" },
+    ],
+    [
+      "author containing a separator is rejected",
+      "Know thyself \u2014 Plato~Socrates",
+      { text: "Know thyself \u2014 Plato~Socrates" },
+    ],
+    [
+      "earlier dash clause is skipped when its author is invalid",
+      "I came \u2014 then I left \u2014 Julius Caesar, Commentaries \u2013 Book I",
+      {
+        text: "I came \u2014 then I left",
+        author: "Julius Caesar",
+        source: "Commentaries \u2013 Book I",
+      },
     ],
   ];
 

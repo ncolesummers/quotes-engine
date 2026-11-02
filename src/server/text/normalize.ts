@@ -40,9 +40,10 @@ const SEPARATOR_RE =
 
 /**
  * Runs of Instagram-style hashtags not glued to a preceding word character (so "C#" is kept).
- * Each tag must contain a letter, so "#1" is kept as text.
+ * Each tag must contain a letter, so "#1" is kept as text. Combining marks count as word
+ * characters so tags in scripts like Devanagari are removed whole.
  */
-const HASHTAG_RE = /(?<![\p{L}\p{N}_])(?:#[\p{N}_]*\p{L}[\p{L}\p{N}_]*)+/gu;
+const HASHTAG_RE = /(?<![\p{L}\p{M}\p{N}_])(?:#[\p{N}_]*\p{L}[\p{L}\p{M}\p{N}_]*)+/gu;
 
 /** Keycap sequences ("1" + U+FE0F + U+20E3), emoji, and the joiners/selectors that glue emoji. */
 const EMOJI_RE =
@@ -81,26 +82,32 @@ function looksLikeAuthor(author: string): boolean {
 /**
  * Split a trailing attribution ("-- Author", "~ Author", "- Author, Source") off a quote.
  *
- * Only the last separator is considered. The author (text after it, up to the first comma)
- * must look like a name, and the separator must either follow a closing quote / sentence
- * end, or be preceded by whitespace in mixed-case text. An unspaced dash between words, or a
- * spaced dash in all-caps text, is ambiguous and left in place. Surrounding quote marks are
- * removed from the returned text.
+ * Separators are tried left to right and the first one that yields a valid attribution
+ * wins, so separators inside a comma-delimited source ("Seneca, Letters - Book II") stay in
+ * the source. A separator is valid when:
+ * - the author (text after it, up to the first comma) looks like a name and contains no
+ *   other separator, and
+ * - it follows a closing quote / sentence end, or is preceded by whitespace in mixed-case
+ *   text. An unspaced dash between words, or a spaced dash in all-caps text, is ambiguous
+ *   and left in place.
+ * Surrounding quote marks are removed from the returned text.
  */
 export function parseAttribution(s: string): Attribution {
   const trimmed = s.trim();
-  const last = [...trimmed.matchAll(SEPARATOR_RE)].at(-1);
+  const separators = [...trimmed.matchAll(SEPARATOR_RE)];
+  const caseInformative = /\p{Ll}/u.test(trimmed);
 
-  if (last) {
-    const head = trimmed.slice(0, last.index).trim();
-    const tail = trimmed.slice(last.index + last[0].length).trim();
-    const commaAt = tail.indexOf(",");
-    const author = (commaAt === -1 ? tail : tail.slice(0, commaAt)).trim();
-    const source = commaAt === -1 ? "" : tail.slice(commaAt + 1).trim();
+  for (const sep of separators) {
+    const sepEnd = sep.index + sep[0].length;
+    const commaAt = trimmed.indexOf(",", sepEnd);
+    const authorEnd = commaAt === -1 ? trimmed.length : commaAt;
+    if (separators.some((other) => other.index >= sepEnd && other.index < authorEnd)) continue;
 
+    const head = trimmed.slice(0, sep.index).trim();
+    const author = trimmed.slice(sepEnd, authorEnd).trim();
+    const source = commaAt === -1 ? "" : trimmed.slice(commaAt + 1).trim();
     const strongHead = STRONG_HEAD_END_RE.test(head);
-    const spacedBefore = /\s$/.test(trimmed.slice(0, last.index));
-    const caseInformative = /\p{Ll}/u.test(trimmed);
+    const spacedBefore = /\s$/.test(trimmed.slice(0, sep.index));
 
     if (head && looksLikeAuthor(author) && (strongHead || (spacedBefore && caseInformative))) {
       const result: Attribution = { text: stripSurroundingQuotes(head), author };
@@ -113,18 +120,19 @@ export function parseAttribution(s: string): Attribution {
 }
 
 /**
- * Canonical form of a quote for deduplication: NFKC (after folding U+00B4 to an apostrophe,
- * which NFKC would otherwise decompose into a space + combining accent), emoji/hashtags
- * removed, attribution stripped, smart punctuation folded to ASCII, lowercased, punctuation
- * removed (apostrophes dropped, everything else becomes a space), whitespace collapsed.
+ * Canonical form of a quote for deduplication. Before NFKC: fold U+00B4 to an apostrophe
+ * (NFKC would decompose it into a space + combining accent) and remove emoji (NFKC turns
+ * some, like U+2139 and U+2122, into letters). Then NFKC, hashtags removed, attribution
+ * stripped, smart punctuation folded to ASCII, lowercased, punctuation removed (apostrophes
+ * dropped, everything else becomes a space), whitespace collapsed.
  */
 export function normalizeQuote(s: string): string {
   const cleaned = collapseWhitespace(
     s
       .replace(/\u00B4/g, "'")
+      .replace(EMOJI_RE, " ")
       .normalize("NFKC")
-      .replace(HASHTAG_RE, " ")
-      .replace(EMOJI_RE, ""),
+      .replace(HASHTAG_RE, " "),
   );
   let text = parseAttribution(cleaned).text;
   for (const [re, replacement] of ASCII_FOLDS) text = text.replace(re, replacement);
