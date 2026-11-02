@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { json, type MockedFetch, mockFetch } from "../../test/helpers/web";
-import { ApiError, apiGet, apiSend, fetchQuotes, fetchStats, toQueryString } from "./api";
+import { json, type MockedFetch, mockFetch, quoteDetail } from "../../test/helpers/web";
+import {
+  ApiError,
+  apiGet,
+  apiSend,
+  fetchQuoteDetail,
+  fetchQuotes,
+  fetchStats,
+  mergeQuote,
+  toQueryString,
+  updateQuote,
+} from "./api";
 
 let fetchMock: MockedFetch | undefined;
 afterEach(() => {
@@ -69,5 +79,37 @@ describe("endpoint helpers", () => {
     fetchMock = mockFetch(() => json({ quotes: 3 }));
     expect(await fetchStats()).toEqual({ quotes: 3 } as never);
     expect(fetchMock.calls[0]?.pathname).toBe("/api/stats");
+  });
+
+  test("fetchQuoteDetail hits /api/quotes/:id", async () => {
+    const body = quoteDetail({ quote: { id: 7 } });
+    fetchMock = mockFetch(() => json(body));
+    expect(await fetchQuoteDetail(7)).toEqual(body as never);
+    expect(fetchMock.calls[0]?.pathname).toBe("/api/quotes/7");
+  });
+
+  test("updateQuote PATCHes only the given fields and returns the quote", async () => {
+    const { quote } = quoteDetail({ quote: { id: 7, author: "New" } });
+    fetchMock = mockFetch(() => json({ quote }));
+    expect(await updateQuote(7, { author: "New" })).toEqual(quote as never);
+    expect(fetchMock.calls[0]?.pathname).toBe("/api/quotes/7");
+    expect(fetchMock.inits[0]?.method).toBe("PATCH");
+    expect(fetchMock.inits[0]?.body).toBe(JSON.stringify({ author: "New" }));
+  });
+
+  test("updateQuote surfaces a 409 as ApiError", async () => {
+    fetchMock = mockFetch(() => json({ error: "Text duplicates quote 3" }, 409));
+    const err = (await updateQuote(7, { text: "x" }).catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+  });
+
+  test("mergeQuote POSTs { dropId } to /api/quotes/:keepId/merge", async () => {
+    const body = quoteDetail({ quote: { id: 7 } });
+    fetchMock = mockFetch(() => json(body));
+    expect(await mergeQuote(7, 9)).toEqual(body as never);
+    expect(fetchMock.calls[0]?.pathname).toBe("/api/quotes/7/merge");
+    expect(fetchMock.inits[0]?.method).toBe("POST");
+    expect(fetchMock.inits[0]?.body).toBe(JSON.stringify({ dropId: 9 }));
   });
 });

@@ -75,6 +75,48 @@ export function quoteItem(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** One posting from `GET /api/quotes/:id`, with sensible defaults. */
+export function postingItem(overrides: Record<string, unknown> = {}) {
+  const postId = (overrides.postId as number | undefined) ?? 1;
+  return {
+    postId,
+    igMediaId: `ig_${postId}`,
+    permalink: `https://www.instagram.com/p/post${postId}/`,
+    mediaPath: `media/${postId}.jpg`,
+    mediaUrl: `/media/${postId}.jpg`,
+    postedAt: "2026-01-01T12:00:00.000Z",
+    likes: 10,
+    comments: 2,
+    method: "caption" as const,
+    confidence: 0.98,
+    status: "confirmed" as const,
+    ...overrides,
+  };
+}
+
+/** A `GET /api/quotes/:id` body. */
+export function quoteDetail(
+  overrides: {
+    quote?: Record<string, unknown>;
+    postings?: ReturnType<typeof postingItem>[];
+    highlights?: unknown[];
+  } = {},
+) {
+  const {
+    postingCount: _pc,
+    totalLikes: _tl,
+    maxLikes: _ml,
+    totalComments: _tc,
+    lastPostedAt: _lp,
+    ...quote
+  } = quoteItem(overrides.quote);
+  return {
+    quote,
+    postings: overrides.postings ?? [postingItem()],
+    highlights: overrides.highlights ?? [],
+  };
+}
+
 /** Render `ui` inside a fresh QueryClient (no retries) and an in-memory wouter router. */
 export function renderWithProviders(ui: ReactNode, { path = "/" }: { path?: string } = {}) {
   const location = memoryLocation({ path, record: true });

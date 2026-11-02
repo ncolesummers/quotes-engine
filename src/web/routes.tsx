@@ -1,14 +1,7 @@
 import { Route, Switch, useSearchParams } from "wouter";
 import { NotFoundPage, PlaceholderPage } from "@/pages/PlaceholderPage";
+import { QuoteDetailPage } from "@/pages/QuoteDetailPage";
 import { SearchPage } from "@/pages/SearchPage";
-
-function QuoteDetailPlaceholder({ id }: { id: string }) {
-  return (
-    <PlaceholderPage title={`Quote #${id}`}>
-      <p>Quote details, postings and editing arrive with #15.</p>
-    </PlaceholderPage>
-  );
-}
 
 function BooksPlaceholder() {
   const [params] = useSearchParams();
@@ -20,12 +13,12 @@ function BooksPlaceholder() {
   );
 }
 
-/** Route table. Replace placeholders as their issues land (#15 quote detail, #25 books, ...). */
+/** Route table. Replace placeholders as their issues land (#25 books, ...). */
 export function AppRoutes() {
   return (
     <Switch>
       <Route path="/" component={SearchPage} />
-      <Route path="/quotes/:id">{(params) => <QuoteDetailPlaceholder id={params.id} />}</Route>
+      <Route path="/quotes/:id">{(params) => <QuoteDetailPage id={params.id} />}</Route>
       <Route path="/books" component={BooksPlaceholder} />
       <Route path="/highlights">
         <PlaceholderPage title="Highlights">

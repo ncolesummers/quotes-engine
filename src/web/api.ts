@@ -87,6 +87,48 @@ export interface QuoteSearchItem extends Quote {
   lastPostedAt: string | null;
 }
 
+export type LinkMethod = "caption" | "image" | "manual";
+export type LinkStatus = "confirmed" | "needs_review";
+
+/** One Instagram post that carries the quote (`GET /api/quotes/:id`), oldest first. */
+export interface Posting {
+  postId: number;
+  igMediaId: string;
+  permalink: string | null;
+  mediaPath: string | null;
+  /** `/media/<file>` when the post's image was downloaded, else null. */
+  mediaUrl: string | null;
+  postedAt: string | null;
+  likes: number | null;
+  comments: number | null;
+  method: LinkMethod;
+  confidence: number | null;
+  status: LinkStatus;
+}
+
+export interface QuoteHighlight {
+  id: number;
+  text: string | null;
+  note: string | null;
+  location: string | null;
+  createdAt: string | null;
+  book: { id: number; title: string | null; author: string | null };
+}
+
+export interface QuoteDetail {
+  quote: Quote;
+  postings: Posting[];
+  highlights: QuoteHighlight[];
+}
+
+/** Editable quote fields; null clears author/sourceTitle/notes. */
+export interface QuotePatch {
+  text?: string;
+  author?: string | null;
+  sourceTitle?: string | null;
+  notes?: string | null;
+}
+
 export interface Page<T> {
   items: T[];
   /** Total matches across all pages. */
@@ -124,4 +166,19 @@ export function fetchQuotes(params: QuoteSearchParams = {}): Promise<Page<QuoteS
 
 export function fetchStats(): Promise<Stats> {
   return apiGet("/api/stats");
+}
+
+export function fetchQuoteDetail(id: number): Promise<QuoteDetail> {
+  return apiGet(`/api/quotes/${id}`);
+}
+
+/** PATCH a quote. Rejects with `ApiError` status 409 when `text` duplicates another quote. */
+export async function updateQuote(id: number, patch: QuotePatch): Promise<Quote> {
+  const { quote } = await apiSend<{ quote: Quote }>("PATCH", `/api/quotes/${id}`, patch);
+  return quote;
+}
+
+/** Merge `dropId` into `keepId` (drop is deleted); resolves to keep's refreshed detail. */
+export function mergeQuote(keepId: number, dropId: number): Promise<QuoteDetail> {
+  return apiSend("POST", `/api/quotes/${keepId}/merge`, { dropId });
 }
