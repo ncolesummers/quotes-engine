@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { OcrLine } from "../ocr/parse";
 import { type PostOcr, writePostOcr } from "../ocr/run";
 import { assembleClassifications, assembleResult, joinOcrLines } from "./assemble";
-import type { ClassificationBatchPost } from "./classify-batches";
+import { type ClassificationBatchPost, formatOcrLine } from "./classify-batches";
 import { parseExtractionFile } from "./import";
 import { ExtractionFileSchema } from "./schema";
 
@@ -30,11 +30,25 @@ const POST: ClassificationBatchPost = {
   posted_at: null,
   caption: "Be the change you wish to see.\n📖 The Blade Itself — Joe Abercrombie\n#joeabercrombie",
   caption_lines: [],
-  images: [
-    { image: 1, file: "p1_1.jpg", lines: [] },
-    { image: 2, file: "p1_2.jpg", lines: [] },
-  ],
+  // As the batch file shows them: the OCR lines, numbered.
+  images: OCR.images.map((img, i) => ({
+    image: i + 1,
+    file: img.file,
+    lines: img.lines.map((line, idx) => formatOcrLine(i + 1, idx, line.text)),
+  })),
 };
+
+/** The batch post an agent would have seen for `ocr`. */
+function postFor(ocr: PostOcr): ClassificationBatchPost {
+  return {
+    ...POST,
+    images: ocr.images.map((img, i) => ({
+      image: i + 1,
+      file: img.file,
+      lines: img.lines.map((line, idx) => formatOcrLine(i + 1, idx, line.text)),
+    })),
+  };
+}
 
 const Q = { author: "Joe Abercrombie", source: "The Blade Itself" };
 
@@ -138,7 +152,7 @@ describe("assembleResult", () => {
           },
         ],
       },
-      POST,
+      postFor(ocr),
       ocr,
     );
     expect(r.quotes[0]?.text).toBe("Quoted text.");
@@ -344,7 +358,7 @@ describe("assembleClassifications", () => {
             ig_media_id: "p2",
             posted_at: null,
             caption: null,
-            images: [{ image: 1, file: "p2.jpg", lines: [] }],
+            images: [{ image: 1, file: "p2.jpg", lines: [formatOcrLine(1, 0, "Only line")] }],
           },
           { ig_media_id: "p3", posted_at: null, caption: "hi", images: [] },
         ],
@@ -412,6 +426,34 @@ describe("assembleClassifications", () => {
     expect(summary.errors.map((e) => e.igMediaId)).toEqual(["nope", "p2"]);
     expect(summary.posts).toBe(0);
     expect(existsSync(join(extractionsDir, "batch-001.json"))).toBe(false);
+    // Nothing was assembled, so the file is failed (kept for a retry), not archived as done.
+    expect(summary).toMatchObject({ filesAssembled: 0, filesFailed: 1 });
+    expect(existsSync(join(classifiedDir, "failed", "batch-001.json"))).toBe(true);
+    expect(existsSync(join(classifiedDir, "failed", "batch-001.json.error.txt"))).toBe(true);
+  });
+
+  test("errors for a post whose OCR changed since its batch was written", () => {
+    writePostOcr(ocrDir, {
+      ig_media_id: "p2",
+      images: [{ file: "p2.jpg", path: "/m/p2.jpg", lines: [l("New first line"), l("Only line")] }],
+    });
+    writeFileSync(
+      join(classifiedDir, "batch-001.json"),
+      JSON.stringify({
+        results: [
+          {
+            ig_media_id: "p2",
+            quotes: [{ ...Q, caption_lines: null, image: 1, lines: [0, 0], confidence: 1 }],
+          },
+          { ig_media_id: "p3", no_quote: true },
+        ],
+      }),
+    );
+    const summary = run();
+    expect(summary.errors).toHaveLength(1);
+    expect(summary.errors[0]).toMatchObject({ igMediaId: "p2" });
+    expect(summary.errors[0]?.message).toMatch(/changed since/);
+    expect(summary.posts).toBe(1);
   });
 
   test("moves an invalid classification file to classified/failed with an error note", () => {
@@ -443,5 +485,96 @@ describe("assembleClassifications", () => {
     expect(summary.errors[0]?.message).toMatch(/import:extractions/);
     expect(readFileSync(join(extractionsDir, "batch-001.json"), "utf8")).toBe("{}");
     expect(existsSync(join(classifiedDir, "batch-001.json"))).toBe(true);
+  });
+});
+
+describe("assembleResult guards against non-quote text", () => {
+  const caption = (
+    q: Partial<Parameters<typeof assembleResult>[0]["quotes"][number]>,
+  ): Parameters<typeof assembleResult>[0] => ({
+    ig_media_id: "p1",
+    no_quote: false,
+    quotes: [
+      {
+        ...Q,
+        image: null,
+        lines: null,
+        from_caption: true,
+        caption_lines: null,
+        confidence: 0.9,
+        ...q,
+      },
+    ],
+  });
+
+  test("a caption-only quote without caption_lines is an error when the caption has several segments", () => {
+    const post = { ...POST, caption: "“A quote.” Some commentary about it.\n― Joe Abercrombie" };
+    expect(() => assembleResult(caption({}), post, OCR)).toThrow(/caption_lines/);
+  });
+
+  test("drops a trailing dash attribution line from an image line range", () => {
+    const r = assembleResult(
+      {
+        ig_media_id: "p1",
+        no_quote: false,
+        quotes: [
+          {
+            ...Q,
+            caption_lines: null,
+            image: 2,
+            lines: [0, 1],
+            from_caption: false,
+            confidence: 1,
+          },
+        ],
+      },
+      POST,
+      OCR,
+    );
+    expect(r.quotes[0]?.text).toBe("Second quote.");
+  });
+
+  test("drops a trailing dash attribution segment from a caption_lines range", () => {
+    const post = {
+      ...POST,
+      caption: "“If you only read the books…” ― Haruki Murakami, Norwegian Wood",
+    };
+    const r = assembleResult(caption({ caption_lines: [0, 1] }), post, OCR);
+    expect(r.quotes[0]?.text).toBe("If you only read the books…");
+  });
+});
+
+describe("joinOcrLines fixes all-caps OCR confusions", () => {
+  test("a standalone 1 between capitalised words is the pronoun I", () => {
+    expect(joinOcrLines(["BUT 1 FEEL THAT 1 HAVE ALWAYS"])).toBe("BUT I FEEL THAT I HAVE ALWAYS");
+    expect(joinOcrLines(["1 SOMETIMES THINK"])).toBe("I SOMETIMES THINK");
+    expect(joinOcrLines(["I WAS BADLY MISINFORMED, 1 DEEPLY REGRET"])).toBe(
+      "I WAS BADLY MISINFORMED, I DEEPLY REGRET",
+    );
+    expect(joinOcrLines(["AND SO", "1 WENT"])).toBe("AND SO I WENT");
+  });
+
+  test("leaves real numbers alone", () => {
+    for (const line of [
+      "CHAPTER 1",
+      "CHAPTER 1 BEGINS",
+      "PART 1 OF THE STORY",
+      "THE 1ST TIME",
+      "STEP 1. BREATHE",
+      "OVER 1,000 YEARS",
+      "WON 1 0 GAMES",
+      "ROOM 21 1 B",
+      "only 1 apple",
+    ]) {
+      expect(joinOcrLines([line])).toBe(line);
+    }
+  });
+
+  test("a line-initial T'D / T'M / T'LL / T'VE in all-caps text is I'D etc.", () => {
+    expect(joinOcrLines(["T'D RATHER BE", "T’M HERE", "T'LL GO", "T'VE SEEN"])).toBe(
+      "I'D RATHER BE I’M HERE I'LL GO I'VE SEEN",
+    );
+    expect(joinOcrLines(["T'd rather"])).toBe("T'd rather");
+    expect(joinOcrLines(["AND T'D"])).toBe("AND T'D");
   });
 });

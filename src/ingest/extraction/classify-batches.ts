@@ -112,7 +112,14 @@ export function writeClassificationBatches(
       continue;
     }
 
-    const ocr = mediaPaths.length > 0 ? readPostOcr(ocrDir, post.igMediaId) : null;
+    let ocr: ReturnType<typeof readPostOcr> = null;
+    try {
+      ocr = mediaPaths.length > 0 ? readPostOcr(ocrDir, post.igMediaId) : null;
+    } catch {
+      // A corrupt OCR file; `bun run ocr` reports it with the fix. Don't stop the other posts.
+      summary.missingOcr.push(post.igMediaId);
+      continue;
+    }
     const byFile = new Map(ocr?.images.map((i) => [i.file, i]));
     const files = mediaPaths.map((p) => basename(p));
     if (files.some((f) => !byFile.has(f))) {

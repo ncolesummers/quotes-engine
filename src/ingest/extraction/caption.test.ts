@@ -77,3 +77,12 @@ describe("stripOuterQuotes", () => {
     expect(stripOuterQuotes("“Unclosed")).toBe("“Unclosed");
   });
 });
+
+describe("captionSegments with straight quotes", () => {
+  test("splits a straight-quoted span away from an attribution on the same line", () => {
+    expect(captionSegments('"Fear is the mind-killer." - Frank Herbert, Dune')).toEqual([
+      '"Fear is the mind-killer."',
+      "- Frank Herbert, Dune",
+    ]);
+  });
+});

@@ -115,6 +115,12 @@ describe("classifiedPathForBatch", () => {
   });
 });
 
+describe("CLASSIFICATION_EXAMPLE", () => {
+  test("its first quote matches the walkthrough: lines [0, 3], leaving out the attribution line", () => {
+    expect(CLASSIFICATION_EXAMPLE.results[0]?.quotes?.[0]?.lines).toEqual([0, 3]);
+  });
+});
+
 describe("docs/classification-prompt.md", () => {
   test("is up to date with the prompt builder (regenerate with `bun run docs:prompt`)", () => {
     const doc = readFileSync(

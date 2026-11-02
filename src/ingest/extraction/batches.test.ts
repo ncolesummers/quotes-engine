@@ -202,6 +202,17 @@ describe("writeBatches", () => {
     expect(readFileSync(join(todoDir, "batch-001.json"), "utf8")).toBe("{}");
   });
 
+  test("refuses to run while classification results are waiting to be assembled", () => {
+    mkdirSync(todoDir, { recursive: true });
+    writeFileSync(join(todoDir, "batch-001.json"), "{}");
+    mkdirSync(join(root, "extractions", "classified"), { recursive: true });
+    writeFileSync(join(root, "extractions", "classified", "batch-001.json"), "{}");
+    upsertPost(db, { igMediaId: "a", caption: "hi" });
+
+    expect(() => writeBatches(db, { mediaDir, todoDir, size: 20 })).toThrow(/extract:assemble/);
+    expect(readFileSync(join(todoDir, "batch-001.json"), "utf8")).toBe("{}");
+  });
+
   test("clears todo/ and rewrites it on every run", () => {
     mkdirSync(todoDir, { recursive: true });
     writeFileSync(join(todoDir, "batch-009.json"), "{}");

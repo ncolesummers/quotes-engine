@@ -24,14 +24,15 @@ export function stripCaption(caption: string | null): string {
 }
 
 /**
- * The stripped caption split into referenceable segments: each “curly-quoted” span is its own
+ * The stripped caption split into referenceable segments: each “curly-quoted” span (or a
+ * "straight-quoted" span within one line) is its own
  * segment (even across line breaks), and the rest is split by line. So a quote and the account's
  * commentary or an attribution on the same line can be told apart by number (`cap:L0`, ...).
  */
 export function captionSegments(caption: string | null): string[] {
   return stripCaption(caption)
-    .split(/(“[^”]*”)/)
-    .flatMap((token) => (token.startsWith("“") ? [token.replace(/\s+/g, " ")] : token.split("\n")))
+    .split(/(“[^”]*”|"[^"\n]*")/)
+    .flatMap((token) => (/^[“"]/.test(token) ? [token.replace(/\s+/g, " ")] : token.split("\n")))
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }

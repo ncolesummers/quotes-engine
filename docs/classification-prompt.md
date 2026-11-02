@@ -67,7 +67,7 @@ Example (a single-image post, a carousel with two quotes, a caption-only quote a
 
 ```json
 {"results": [
-  {"ig_media_id":"17890000000000001","no_quote":false,"quotes":[{"image":1,"lines":[0,4],"from_caption":false,"author":"Joe Abercrombie","source":"The First Law","confidence":0.9}]},
+  {"ig_media_id":"17890000000000001","no_quote":false,"quotes":[{"image":1,"lines":[0,3],"from_caption":false,"author":"Joe Abercrombie","source":"The First Law","confidence":0.9}]},
   {"ig_media_id":"17890000000000002","no_quote":false,"quotes":[{"image":1,"lines":[1,3],"from_caption":false,"author":"Robin Hobb","source":"Fool's Errand","confidence":0.95},{"image":2,"lines":[0,2],"from_caption":false,"author":"Robin Hobb","source":"Fool's Errand","confidence":0.85}]},
   {"ig_media_id":"17890000000000003","no_quote":false,"quotes":[{"from_caption":true,"caption_lines":[0,0],"author":"Haruki Murakami","source":"Kafka on the Shore","confidence":0.8}]},
   {"ig_media_id":"17890000000000004","no_quote":true,"quotes":[]}

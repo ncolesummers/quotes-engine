@@ -146,6 +146,19 @@ describe("writeClassificationBatches", () => {
     expect(summary.batches).toEqual([]);
   });
 
+  test("lists a post with a corrupt OCR file as missing OCR without stopping the run", () => {
+    upsertPost(db, { igMediaId: "bad", mediaType: "IMAGE", caption: "x" });
+    writeFileSync(join(mediaDir, "bad.jpg"), "x");
+    mkdirSync(ocrDir, { recursive: true });
+    writeFileSync(join(ocrDir, "bad.json"), "{bad");
+    upsertPost(db, { igMediaId: "good", mediaType: "IMAGE", caption: "x" });
+    withOcr("good", { "good.jpg": ["a"] });
+
+    const summary = write();
+    expect(summary.missingOcr).toEqual(["bad"]);
+    expect(summary.posts).toBe(1);
+  });
+
   test("skips extracted posts, lists missing media, keeps caption-only videos", () => {
     const done = upsertPost(db, { igMediaId: "done", mediaType: "IMAGE", caption: "x" });
     markExtracted(db, done.id, "2024-01-01T00:00:00Z");

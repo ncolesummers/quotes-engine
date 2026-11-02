@@ -115,6 +115,8 @@ export function toBatchPost(post: Post, mediaPaths: string[]): BatchPost | null 
  *
  * Throws if result files are still waiting in `todoDir`'s parent: batch names restart at
  * `batch-001` on every run, so new agents would overwrite results that were never imported.
+ * Also throws while classification results (`classified/*.json`) wait to be assembled against
+ * the current `todo/` batches.
  */
 export function writeBatches(
   db: Database,
@@ -125,6 +127,15 @@ export function writeBatches(
     throw new Error(
       `${pending.length} result file(s) in ${dirname(todoDir)} are not imported yet. ` +
         "Run `bun run import:extractions` first, so new batches can't overwrite them.",
+    );
+  }
+  // Classification results are assembled against the todo/ batches, so don't replace those.
+  const classifiedDir = join(dirname(resolve(todoDir)), "classified");
+  const unassembled = listExtractionFiles(classifiedDir);
+  if (unassembled.length > 0) {
+    throw new Error(
+      `${unassembled.length} classification file(s) in ${classifiedDir} are not assembled yet. ` +
+        "Run `bun run extract:assemble` and `bun run import:extractions` first.",
     );
   }
 

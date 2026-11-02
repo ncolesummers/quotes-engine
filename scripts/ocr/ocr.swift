@@ -5,8 +5,8 @@
 //
 // Prints a JSON array with one entry per input path, in input order:
 //   [{ "path", "lines": [{ "text", "confidence", "box": { "x", "y", "w", "h" } }], "error"? }]
-// Boxes are normalized to 0–1 with the origin at the TOP-left. Lines are in reading order (top to
-// bottom, then left to right). An image that can't be read gets "error" and no lines; the exit
+// Boxes are normalized to 0–1 with the origin at the TOP-left. Lines are in Vision's order; the
+// caller (src/ingest/ocr/parse.ts, sortReadingOrder) puts them in reading order. An image that can't be read gets "error" and no lines; the exit
 // code is still 0, so one bad file doesn't lose the others.
 import Foundation
 import ImageIO
@@ -54,14 +54,7 @@ func recognize(_ path: String) -> ImageResult {
       box: Box(
         x: Double(bb.minX), y: Double(1 - bb.maxY), w: Double(bb.width), h: Double(bb.height)))
   }
-  let sorted = lines.sorted { a, b in
-    let ca = a.box.y + a.box.h / 2
-    let cb = b.box.y + b.box.h / 2
-    // Same row when the vertical centres are within half a line height.
-    if abs(ca - cb) < 0.5 * min(a.box.h, b.box.h) { return a.box.x < b.box.x }
-    return ca < cb
-  }
-  return ImageResult(path: path, lines: sorted, error: nil)
+  return ImageResult(path: path, lines: lines, error: nil)
 }
 
 let paths = Array(CommandLine.arguments.dropFirst())

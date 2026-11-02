@@ -121,7 +121,16 @@ export async function runOcr(
     }
     if (mediaPaths.length === 0) continue;
     summary.posts++;
-    const existing = readPostOcr(ocrDir, post.igMediaId);
+    let existing: PostOcr | null;
+    try {
+      existing = readPostOcr(ocrDir, post.igMediaId);
+    } catch (err) {
+      // Left as is (not redone) so the user can look at it; the message says to delete it.
+      const message = err instanceof Error ? err.message : String(err);
+      for (const path of mediaPaths)
+        summary.failures.push({ igMediaId: post.igMediaId, path, message });
+      continue;
+    }
     const done = new Set(existing?.images.map((i) => i.file));
     const todo = mediaPaths.filter((p) => !done.has(basename(p)));
     summary.imagesSkipped += mediaPaths.length - todo.length;

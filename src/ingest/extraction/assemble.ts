@@ -8,7 +8,11 @@ import {
   type ClassificationResult,
   type ClassifiedQuote,
 } from "./classification-schema";
-import type { ClassificationBatchFile, ClassificationBatchPost } from "./classify-batches";
+import {
+  type ClassificationBatchFile,
+  type ClassificationBatchPost,
+  formatOcrLine,
+} from "./classify-batches";
 import { listExtractionFiles, moveInto } from "./import";
 import type { ExtractedQuote, ExtractionFile, ExtractionResult } from "./schema";
 
@@ -42,19 +46,70 @@ export interface AssembleSummary {
 // A letter, then a wrap hyphen (ASCII, Unicode hyphen or soft hyphen) at the very end.
 const WRAP_HYPHEN = /(\p{L})[-‐­]$/u;
 
+// Words before a number that is really a number (`CHAPTER 1 BEGINS`), never the pronoun.
+const NUMBERING_WORDS = new Set(
+  "ACT BOOK CHAPTER DAY EPISODE LEVEL NO NUMBER PAGE PART PSALM ROOM ROUND SCENE SEASON STEP VOL VOLUME".split(
+    " ",
+  ),
+);
+const CAPS_WORD = /^\p{Lu}[\p{Lu}'’]*$/u;
+// Line-initial `T'D` read for `I'D` (and `'M`, `'LL`, `'VE`).
+const T_CONTRACTION = /^T(['’](?:D|M|LL|VE))(?![\p{L}])/u;
+
+/**
+ * Undo Vision's all-caps confusions, leaving the text otherwise as read (no case changes): a
+ * line-initial `T'D` / `T'M` / `T'LL` / `T'VE` in an all-caps line becomes `I'D` etc.
+ */
+function fixCapsLine(line: string): string {
+  if (/\p{Ll}/u.test(line)) return line;
+  return line.replace(T_CONTRACTION, "I$1");
+}
+
+/**
+ * A standalone `1` becomes `I` when the next word is an all-caps word and the previous one (if
+ * any) is a word, not a digit or a numbering word like `CHAPTER`. `1st`, `1.`, `1,000` aren't
+ * standalone tokens, so they are never touched.
+ */
+function fixCapsPronoun(text: string): string {
+  const tokens = text.split(" ");
+  return tokens
+    .map((token, i) => {
+      if (token !== "1") return token;
+      const next = tokens[i + 1];
+      if (next === undefined || !CAPS_WORD.test(next.replace(/[.,;:!?]+$/, ""))) return token;
+      const prev = tokens[i - 1];
+      if (prev === undefined) return "I";
+      const word = prev.replace(/[.,;:!?—–-]+$/, "");
+      if (/\p{N}/u.test(prev) || !/^\p{L}[\p{L}'’]*$/u.test(word)) return token;
+      return NUMBERING_WORDS.has(word.toUpperCase()) ? token : "I";
+    })
+    .join(" ");
+}
+
 /**
  * Join OCR lines into one quote: lines are trimmed and joined with single spaces, and a word
- * hyphenated across a wrap (`bet-` + `ter`) is merged when the next line starts lowercase.
+ * hyphenated across a wrap (`bet-` + `ter`) is merged when the next line starts lowercase. All-caps
+ * OCR confusions of `I` (`1`, `T'D`) are undone; see `fixCapsLine` and `fixCapsPronoun`.
  */
 export function joinOcrLines(lines: readonly string[]): string {
   let out = "";
   for (const raw of lines) {
-    const line = raw.replace(/\s+/g, " ").trim();
+    const line = fixCapsLine(raw.replace(/\s+/g, " ").trim());
     if (!line) continue;
     if (out && WRAP_HYPHEN.test(out) && /^\p{Ll}/u.test(line)) out = out.slice(0, -1) + line;
     else out = out ? `${out} ${line}` : line;
   }
-  return out;
+  return fixCapsPronoun(out);
+}
+
+// A line that is only an attribution: a dash (em, en, horizontal bar, or `- `) then a name.
+const ATTRIBUTION_LINE = /^\s*(?:[—–―]|-\s)\s*\p{L}/u;
+
+/** `items` without trailing attribution lines, keeping at least the first item. */
+function dropTrailingAttribution<T>(items: readonly T[], text: (item: T) => string): T[] {
+  let end = items.length;
+  while (end > 1 && ATTRIBUTION_LINE.test(text(items[end - 1] as T))) end--;
+  return items.slice(0, end);
 }
 
 function round(n: number): number {
@@ -63,15 +118,22 @@ function round(n: number): number {
 
 /** Caption text for a caption-only quote: its `caption_lines` segments, or the whole caption. */
 function captionText(q: ClassifiedQuote, caption: string | null): string {
-  if (q.caption_lines === null) return stripCaption(caption);
   const segments = captionSegments(caption);
+  if (q.caption_lines === null) {
+    if (segments.length > 1) {
+      throw new Error(
+        `caption-only quote without caption_lines, but the caption has ${segments.length} segments`,
+      );
+    }
+    return stripCaption(caption);
+  }
   const [start, end] = q.caption_lines;
   if (end >= segments.length) {
     throw new Error(
       `caption_lines [${start}, ${end}] are out of range (caption has ${segments.length})`,
     );
   }
-  return segments.slice(start, end + 1).join(" ");
+  return dropTrailingAttribution(segments.slice(start, end + 1), (s) => s).join(" ");
 }
 
 function assembleQuote(
@@ -90,6 +152,14 @@ function assembleQuote(
   if (!ref) throw new Error(`image ${q.image} is out of range (post has ${post.images.length})`);
   const lines = ocr?.images.find((i) => i.file === ref.file)?.lines;
   if (!lines) throw new Error(`no OCR for image ${q.image} (${ref.file}); run \`bun run ocr\``);
+  // The agent's line numbers refer to the lines in the batch; the OCR must still be those lines.
+  const current = lines.map((l, i) => formatOcrLine(ref.image, i, l.text));
+  if (current.length !== ref.lines.length || current.some((line, i) => line !== ref.lines[i])) {
+    throw new Error(
+      `OCR for image ${q.image} (${ref.file}) changed since the batch was written; ` +
+        "re-run `bun run extract:classify-batches` and classify again",
+    );
+  }
   const [start, end] = q.lines;
   if (end >= lines.length) {
     throw new Error(
@@ -97,7 +167,7 @@ function assembleQuote(
     );
   }
 
-  const picked = lines.slice(start, end + 1);
+  const picked = dropTrailingAttribution(lines.slice(start, end + 1), (l) => l.text);
   const text = stripOuterQuotes(joinOcrLines(picked.map((l) => l.text)));
   if (!text) throw new Error(`lines [${start}, ${end}] of image ${q.image} are empty`);
   const ocrConfidence = picked.reduce((sum, l) => sum + l.confidence, 0) / picked.length;
@@ -133,8 +203,9 @@ export function assembleResult(
 /**
  * Assemble every `classifiedDir/*.json` into `extractionsDir/<same name>.json` (the
  * `ExtractionFile` schema `import:extractions` reads). Assembled classification files move to
- * `classified/assembled/`; invalid ones to `classified/failed/` with a `.error.txt`. A file whose
- * output path still holds an unimported extraction file is left in place.
+ * `classified/assembled/`; invalid ones, and ones where every post failed, to `classified/failed/`
+ * with a `.error.txt`. A file whose output path still holds an unimported extraction file is
+ * left in place.
  */
 export function assembleClassifications({
   classifiedDir,
@@ -188,6 +259,17 @@ export function assembleClassifications({
       }
     }
 
+    if (out.length === 0 && results.length > 0) {
+      // Every post failed: keep the agent's work in failed/ for a retry, not in assembled/.
+      const message = `no post could be assembled (${results.length} failed)`;
+      const dest = moveInto(file, join(classifiedDir, "failed"));
+      const details = summary.errors
+        .filter((e) => e.file === file)
+        .map((e) => `${e.igMediaId}: ${e.message}`);
+      writeFileSync(`${dest}.error.txt`, `${[message, ...details].join("\n")}\n`);
+      summary.filesFailed++;
+      continue;
+    }
     if (out.length > 0) {
       mkdirSync(extractionsDir, { recursive: true });
       const extraction: ExtractionFile = { results: out };
@@ -218,6 +300,9 @@ function parseClassificationFile(content: string): ClassificationResult[] {
 function readBatchPosts(path: string): Map<string, ClassificationBatchPost> {
   if (!existsSync(path)) throw new Error(`Batch file ${path} not found`);
   const batch = JSON.parse(readFileSync(path, "utf8")) as ClassificationBatchFile;
+  if (!Array.isArray(batch.posts) || batch.posts.some((p) => !Array.isArray(p.images))) {
+    throw new Error(`${path} is not a classification batch (run \`extract:classify-batches\`)`);
+  }
   return new Map(batch.posts.map((p) => [p.ig_media_id, p]));
 }
 

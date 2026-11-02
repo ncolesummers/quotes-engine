@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { createTestDb } from "../../../test/helpers/db";
@@ -184,5 +184,22 @@ describe("runOcr", () => {
     mkdirSync(ocrDir, { recursive: true });
     writeFileSync(ocrPath(ocrDir, "solo"), "{bad");
     expect(() => readPostOcr(ocrDir, "solo")).toThrow(/solo/);
+  });
+
+  test("a corrupt OCR file fails that post (left untouched) without stopping the run", async () => {
+    upsertPost(db, { igMediaId: "bad", mediaType: "IMAGE", postedAt: "2020-01-01T00:00:00Z" });
+    upsertPost(db, { igMediaId: "good", mediaType: "IMAGE", postedAt: "2020-01-02T00:00:00Z" });
+    touch("bad.jpg");
+    touch("good.jpg");
+    mkdirSync(ocrDir, { recursive: true });
+    writeFileSync(ocrPath(ocrDir, "bad"), "{bad");
+
+    const { runner, calls } = fakeRunner();
+    const summary = await runOcr(db, { mediaDir, ocrDir, runner });
+    expect(calls).toEqual([["good.jpg"]]);
+    expect(summary.failures).toHaveLength(1);
+    expect(summary.failures[0]).toMatchObject({ igMediaId: "bad" });
+    expect(summary.failures[0]?.message).toMatch(/Corrupt OCR file/);
+    expect(readFileSync(ocrPath(ocrDir, "bad"), "utf8")).toBe("{bad");
   });
 });

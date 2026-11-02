@@ -23,7 +23,7 @@ export const CLASSIFICATION_EXAMPLE: z.input<typeof ClassificationFileSchema> = 
       quotes: [
         {
           image: 1,
-          lines: [0, 4],
+          lines: [0, 3],
           from_caption: false,
           author: "Joe Abercrombie",
           source: "The First Law",
