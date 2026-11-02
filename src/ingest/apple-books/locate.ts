@@ -23,6 +23,21 @@ export interface LocateOptions {
 /** Reading the Books container was refused: the terminal lacks Full Disk Access. */
 export class AppleBooksAccessError extends Error {
   override name = "AppleBooksAccessError";
+
+  constructor(path: string, code: string, cause: unknown) {
+    super(
+      `Can't read ${path} (${code}). macOS protects the Books library: grant your terminal ` +
+        "Full Disk Access in System Settings > Privacy & Security > Full Disk Access, then " +
+        "restart the terminal and try again.",
+      { cause },
+    );
+  }
+}
+
+/** `err` as an `AppleBooksAccessError` when it is a permission refusal, else unchanged. */
+export function asAccessError(path: string, err: unknown): unknown {
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "EPERM" || code === "EACCES" ? new AppleBooksAccessError(path, code, err) : err;
 }
 
 function findDb(
@@ -35,15 +50,9 @@ function findDb(
   try {
     names = readdir(dir);
   } catch (err) {
+    const access = asAccessError(dir, err);
+    if (access instanceof AppleBooksAccessError) throw access;
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === "EPERM" || code === "EACCES") {
-      throw new AppleBooksAccessError(
-        `Can't read ${dir} (${code}). macOS protects the Books library: grant your terminal ` +
-          "Full Disk Access in System Settings > Privacy & Security > Full Disk Access, then " +
-          "restart the terminal and try again.",
-        { cause: err },
-      );
-    }
     if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
     names = [];
   }

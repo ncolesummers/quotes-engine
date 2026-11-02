@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   insertAnnotations,
   LIBRARY_DB,
 } from "../../../test/fixtures/apple-books/build";
+import { AppleBooksAccessError } from "./locate";
 import { coreDataToIso, readAppleBooks } from "./read";
 
 const FIXTURES = join(import.meta.dir, "../../../test/fixtures/apple-books");
@@ -111,6 +112,78 @@ describe("readAppleBooks", () => {
     } finally {
       writer.close();
     }
+  });
+
+  test("copies the WAL but not its index, which may not match the copied WAL", () => {
+    const src = join(scratch, "src");
+    const annotationDb = join(src, ANNOTATION_DB);
+    const libraryDb = join(src, LIBRARY_DB);
+    const writer = createAnnotationDb(annotationDb, []);
+    createLibraryDb(libraryDb, FIXTURE_ASSETS).close();
+    try {
+      writer.run("PRAGMA journal_mode = WAL");
+      writer.run("PRAGMA wal_autocheckpoint = 0");
+      insertAnnotations(writer, [
+        { uuid: "u-wal", assetId: FIXTURE_ASSETS[0]?.assetId ?? "", text: "In the WAL." },
+      ]);
+      const copied: string[] = [];
+      const { highlights } = readAppleBooks(
+        { annotationDb, libraryDb },
+        {
+          tmpRoot: scratch,
+          copyFile: (from, to) => {
+            copied.push(from);
+            copyFileSync(from, to);
+          },
+        },
+      );
+      expect(highlights.map((h) => h.text)).toEqual(["In the WAL."]);
+      expect(copied).toContain(`${annotationDb}-wal`);
+      expect(copied.some((p) => p.endsWith("-shm"))).toBe(false);
+    } finally {
+      writer.close();
+    }
+  });
+
+  test("copies again when Books writes to a DB mid-copy", () => {
+    const src = join(scratch, "src");
+    const annotationDb = join(src, ANNOTATION_DB);
+    const libraryDb = join(src, LIBRARY_DB);
+    const writer = createAnnotationDb(annotationDb, []);
+    createLibraryDb(libraryDb, FIXTURE_ASSETS).close();
+    try {
+      writer.run("PRAGMA journal_mode = WAL");
+      writer.run("PRAGMA wal_autocheckpoint = 0");
+      let copies = 0;
+      const { highlights } = readAppleBooks(
+        { annotationDb, libraryDb },
+        {
+          tmpRoot: scratch,
+          copyFile: (from, to) => {
+            copyFileSync(from, to);
+            if (from === annotationDb && copies++ === 0) {
+              insertAnnotations(writer, [
+                { uuid: "u-late", assetId: FIXTURE_ASSETS[0]?.assetId ?? "", text: "Late." },
+              ]);
+            }
+          },
+        },
+      );
+      expect(copies).toBe(2);
+      expect(highlights.map((h) => h.text)).toEqual(["Late."]);
+    } finally {
+      writer.close();
+    }
+  });
+
+  test("a refused read of a DB file asks for Full Disk Access", () => {
+    const refuse = () => {
+      throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+    };
+    expect(() => readAppleBooks(PATHS, { tmpRoot: scratch, copyFile: refuse })).toThrow(
+      AppleBooksAccessError,
+    );
+    expect(readdirSync(scratch)).toEqual([]);
   });
 
   test("never writes next to the originals and cleans up its copies", () => {

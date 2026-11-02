@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { AppleBooksPaths } from "./locate";
+import { type AppleBooksPaths, asAccessError } from "./locate";
 
 /** A book from the Books library (`ZBKLIBRARYASSET`). */
 export interface AppleBook {
@@ -35,6 +35,8 @@ export interface AppleBooksData {
 export interface ReadOptions {
   /** Where the temporary copies go. Default: the OS temp dir. */
   tmpRoot?: string;
+  /** Copies one file. Default: `copyFileSync`. For tests. */
+  copyFile?: (from: string, to: string) => void;
 }
 
 /** Core Data timestamps count seconds from 2001-01-01T00:00:00Z. */
@@ -57,14 +59,40 @@ interface AnnotationRow {
   created: number | null;
 }
 
+/** Attempts at a copy that no write by Books interleaved with. */
+const COPY_ATTEMPTS = 5;
+
+/** Size and mtime of `path`, or null when it doesn't exist. */
+function fingerprint(path: string): string | null {
+  const st = statSync(path, { throwIfNoEntry: false });
+  return st ? `${st.size}:${st.mtimeMs}` : null;
+}
+
 /**
- * Copies `path` and its `-wal`/`-shm` (Books keeps recent writes in the WAL) into `dir`, and
- * opens the copy read-only. The originals are never opened.
+ * Copies `path` and its `-wal` (Books keeps recent writes in the WAL) into `dir`, and opens
+ * the copy read-only. The originals are never opened. The `-shm` index isn't copied: copied
+ * at another moment than the WAL it could disagree with it, and SQLite rebuilds it from the
+ * WAL. If Books wrote to either file during the copy, the pair may not match, so it copies
+ * again.
  */
-function openCopy(path: string, dir: string): Database {
+function openCopy(path: string, dir: string, copyFile: (from: string, to: string) => void) {
   const copy = join(dir, basename(path));
-  for (const suffix of ["", "-wal", "-shm"]) {
-    if (suffix === "" || existsSync(path + suffix)) copyFileSync(path + suffix, copy + suffix);
+  const files = [path, `${path}-wal`];
+  const state = () => files.map(fingerprint).join("|");
+  try {
+    for (let attempt = 1; ; attempt++) {
+      const before = state();
+      rmSync(`${copy}-wal`, { force: true });
+      for (const file of files) {
+        if (file === path || fingerprint(file) !== null) copyFile(file, join(dir, basename(file)));
+      }
+      if (state() === before) break;
+      if (attempt === COPY_ATTEMPTS) {
+        throw new Error(`${path} kept changing while it was copied. Quit Books and try again.`);
+      }
+    }
+  } catch (err) {
+    throw asAccessError(path, err);
   }
   return new Database(copy, { readonly: true, strict: true });
 }
@@ -118,8 +146,9 @@ function readBooks(db: Database, assetIds: Set<string>): AppleBook[] {
  */
 export function readAppleBooks(paths: AppleBooksPaths, opts: ReadOptions = {}): AppleBooksData {
   const dir = mkdtempSync(join(opts.tmpRoot ?? tmpdir(), "apple-books-"));
+  const copyFile = opts.copyFile ?? copyFileSync;
   try {
-    const annotations = openCopy(paths.annotationDb, dir);
+    const annotations = openCopy(paths.annotationDb, dir, copyFile);
     let highlights: AppleHighlight[];
     try {
       highlights = readHighlights(annotations);
@@ -127,7 +156,7 @@ export function readAppleBooks(paths: AppleBooksPaths, opts: ReadOptions = {}): 
       annotations.close();
     }
 
-    const library = openCopy(paths.libraryDb, dir);
+    const library = openCopy(paths.libraryDb, dir, copyFile);
     try {
       const books = readBooks(library, new Set(highlights.map((h) => h.assetId)));
       return { books, highlights };

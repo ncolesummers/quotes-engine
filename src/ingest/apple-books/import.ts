@@ -60,18 +60,33 @@ function containsWords(outer: string, inner: string): boolean {
 const MIN_FUZZY_CONTAINED_WORDS = 6;
 
 /**
- * Share of the shorter string's trigrams found in the longer one: high when an OCR'd quote
- * is a slightly garbled or trimmed excerpt of a longer highlight, which Jaccard (diluted by
- * the rest of the highlight) misses. 0 when the shorter side is too short to be telling.
+ * A fuzzy excerpt must lie within a run of the longer text at most this many times its own
+ * word count, leaving room for an elided clause but not for words gathered from all over a
+ * long highlight.
+ */
+const MAX_FUZZY_SPAN = 1.5;
+
+/**
+ * Best share of the shorter string's trigrams found in one contiguous run of the longer
+ * one's words (see `MAX_FUZZY_SPAN`): high when an OCR'd quote is a slightly garbled or
+ * trimmed excerpt of a longer highlight, which Jaccard (diluted by the rest of the
+ * highlight) misses. 0 when the shorter side is too short to be telling.
  */
 function fuzzyContainment(a: string, b: string): number {
   const [inner, outer] = a.length <= b.length ? [a, b] : [b, a];
-  if (wordCount(inner) < MIN_FUZZY_CONTAINED_WORDS) return 0;
+  const innerWords = wordCount(inner);
+  if (innerWords < MIN_FUZZY_CONTAINED_WORDS) return 0;
   const innerGrams = trigrams(inner);
-  const outerGrams = trigrams(outer);
-  let shared = 0;
-  for (const g of innerGrams) if (outerGrams.has(g)) shared++;
-  return shared / innerGrams.size;
+  const words = outer.split(" ");
+  const span = Math.min(words.length, Math.ceil(innerWords * MAX_FUZZY_SPAN));
+  let best = 0;
+  for (let start = 0; start + span <= words.length; start++) {
+    const windowGrams = trigrams(words.slice(start, start + span).join(" "));
+    let shared = 0;
+    for (const g of innerGrams) if (windowGrams.has(g)) shared++;
+    best = Math.max(best, shared / innerGrams.size);
+  }
+  return best;
 }
 
 const MATCH_RANK = { same: 2, likely: 1, different: 0 } as const;
@@ -182,7 +197,7 @@ function quoteCandidatesByBook(db: Database): Map<number, QuoteCandidate[]> {
 /**
  * Upserts Apple Books records by asset id and highlights by annotation uuid, then links each
  * highlight without a quote to the quote it matches (see `matchQuote`; an exact normalized
- * match links across books). Existing links are kept. Idempotent.
+ * match of four or more words links across books). Existing links are kept. Idempotent.
  */
 export function importAppleBooks(db: Database, data: AppleBooksData): ImportBooksSummary {
   return db.transaction((): ImportBooksSummary => {
@@ -220,16 +235,23 @@ export function importAppleBooks(db: Database, data: AppleBooksData): ImportBook
       "SELECT id FROM quotes WHERE normalized_text = $normalized",
     );
     const setQuote = db.query("UPDATE highlights SET quote_id = $quoteId WHERE id = $id");
+    // As in `fillMissing`: a linked highlight names the quote's book when it has none.
+    const fillQuoteBook = db.query(
+      "UPDATE quotes SET book_id = $bookId WHERE id = $quoteId AND book_id IS NULL",
+    );
 
     const link = (id: number, h: AppleHighlight, bookId: number) => {
       const normalized = normalizeQuote(h.text);
       if (!normalized) return;
-      const exact = exactQuote.get({ normalized });
+      // Across books, a short line ("so it goes") is too common to be the same quote.
+      const exact =
+        wordCount(normalized) >= MIN_CONTAINED_WORDS ? exactQuote.get({ normalized }) : null;
       const match = exact
         ? { quoteId: exact.id, method: "exact" as const }
         : matchQuote(normalized, candidates.get(bookId) ?? []);
       if (!match) return;
       setQuote.run({ quoteId: match.quoteId, id });
+      fillQuoteBook.run({ quoteId: match.quoteId, bookId });
       summary.linked[match.method]++;
     };
 

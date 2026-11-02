@@ -10,7 +10,7 @@ import { type Book, findOrCreateBook } from "../../server/repos/books";
 import { normalizeQuote } from "../../server/text/normalize";
 import { classifyMatch, normalizedSimilarity } from "../../server/text/similarity";
 import { formatImportSummary, importAppleBooks, matchQuote, primaryAuthor } from "./import";
-import { type AppleBooksData, type AppleHighlight, readAppleBooks } from "./read";
+import { type AppleBook, type AppleBooksData, type AppleHighlight, readAppleBooks } from "./read";
 
 const FIXTURES = join(import.meta.dir, "../../../test/fixtures/apple-books");
 
@@ -37,7 +37,10 @@ function hl(uuid: string, assetId: string, text: string, extra: Partial<AppleHig
   };
 }
 
-function data(highlights: AppleHighlight[], books = [LANTERN, SALT]): AppleBooksData {
+function data(
+  highlights: AppleHighlight[],
+  books: Omit<AppleBook, "state">[] = [LANTERN, SALT],
+): AppleBooksData {
   return { books: books.map((b) => ({ ...b, state: 1 })), highlights };
 }
 
@@ -221,6 +224,18 @@ describe("importAppleBooks", () => {
     expect(new Set(highlightRows().map((h) => h.bookId)).size).toBe(1);
   });
 
+  test("an Apple Books record without an author gives its asset id to the authored book", () => {
+    const caption = findOrCreateBook(db, { ...LANTERN, assetId: null, source: "caption" });
+    const anonymous = { ...LANTERN, author: null };
+
+    const summary = importAppleBooks(db, data([hl("u1", LANTERN.assetId, LAMP)], [anonymous]));
+
+    expect(summary.books).toEqual({ created: 0, merged: 1, existing: 0 });
+    expect(books()).toEqual([
+      expect.objectContaining({ id: caption?.id, assetId: LANTERN.assetId }),
+    ]);
+  });
+
   test("skips highlights whose book isn't in the library", () => {
     const summary = importAppleBooks(db, data([hl("u1", "ASSET-GONE", LAMP)]));
     expect(summary.highlights.skipped).toBe(1);
@@ -238,6 +253,37 @@ describe("linking highlights to quotes", () => {
     expect(quoteIdOf("u1")).toBe(q.id);
     expect(summary.linked).toEqual({ exact: 1, contained: 0, same: 0, likely: 0 });
     expect(quoteIdOf("u2")).toBeNull();
+  });
+
+  test("a short exact match only links within the highlight's book", () => {
+    const salt = findOrCreateBook(db, { ...SALT, assetId: null, source: "caption" });
+    const s = seed(db);
+    const q = s.quote({ text: "So it goes." });
+    db.query("UPDATE quotes SET book_id = $b WHERE id = $q").run({ b: salt?.id ?? 0, q: q.id });
+    const highlights = [
+      hl("u1", LANTERN.assetId, "So it goes."),
+      hl("u3", SALT.assetId, "So it goes."),
+    ];
+
+    importAppleBooks(db, data(highlights));
+
+    expect(quoteIdOf("u1")).toBeNull();
+    expect(quoteIdOf("u3")).toBe(q.id);
+  });
+
+  test("linking a quote that has no book gives it the highlight's book", () => {
+    const s = seed(db);
+    const q = s.quote({ text: LAMP });
+
+    importAppleBooks(db, BASIC);
+
+    const lantern = books().find((b) => b.assetId === LANTERN.assetId);
+    const bookId = db
+      .query<{ bookId: number | null }, { id: number }>(
+        "SELECT book_id AS bookId FROM quotes WHERE id = $id",
+      )
+      .get({ id: q.id })?.bookId;
+    expect(bookId).toBe(lantern?.id ?? -1);
   });
 
   test("a quote contained in a longer highlight from its book is linked", () => {
@@ -352,6 +398,24 @@ describe("matchQuote", () => {
       "The tide said nothing, and then the tide took the whole pier.",
     );
     expect(matchQuote(highlight, [{ id: 9, normalizedText: "the tlde took" }])).toBeNull();
+  });
+
+  test("words scattered across a long highlight aren't a fuzzy excerpt", () => {
+    const highlight = normalizeQuote(
+      "It was the best of times, it was the worst of times, it was the age of wisdom, it " +
+        "was the age of foolishness, it was the season of Light, it was the season of " +
+        "Darkness, it was the spring of hope, it was the winter of despair, we had " +
+        "everything before us, we were all going direct the other way.",
+    );
+    for (const text of [
+      "the season of the age of hope and despair",
+      "we had the best of the worst foolishness",
+      "the other way of the season was light",
+    ]) {
+      const quote = normalizeQuote(text);
+      expect(matchQuote(highlight, [{ id: 9, normalizedText: quote }])).toBeNull();
+      expect(matchQuote(quote, [{ id: 9, normalizedText: highlight }])).toBeNull();
+    }
   });
 
   test("text that merely shares words with a highlight doesn't match", () => {
