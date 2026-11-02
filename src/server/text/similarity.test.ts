@@ -3,6 +3,7 @@ import {
   classifyMatch,
   LIKELY_THRESHOLD,
   type MatchClass,
+  normalizedSimilarity,
   SAME_THRESHOLD,
   trigramSimilarity,
 } from "./similarity";
@@ -89,5 +90,15 @@ describe("classifyMatch", () => {
 
   test.each(cases)("%p -> %s", (score, expected) => {
     expect(classifyMatch(score)).toBe(expected);
+  });
+});
+
+describe("normalizedSimilarity", () => {
+  test("scores already-normalized strings like trigramSimilarity does", () => {
+    const a = "the obstacle is the way";
+    const b = "the obstacle is the wey";
+    expect(normalizedSimilarity(a, b)).toBe(trigramSimilarity(a, b));
+    expect(normalizedSimilarity(a, a)).toBe(1);
+    expect(normalizedSimilarity(a, "")).toBe(0);
   });
 });
