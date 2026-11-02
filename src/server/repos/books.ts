@@ -122,7 +122,11 @@ function requireBook(db: Database, id: number): Book {
   return book;
 }
 
-function resolveBook(
+/**
+ * `findOrCreateBook`, also reporting whether the row was created. Null when the title is
+ * empty.
+ */
+export function resolveBook(
   db: Database,
   { title: rawTitle, author: rawAuthor, source = "manual", assetId = null }: FindOrCreateBookInput,
 ): { book: Book; created: boolean } | null {
@@ -141,17 +145,15 @@ function resolveBook(
       if (byAsset) return { book: byAsset, created: false };
     }
 
+    // An existing book gains the asset id if it has none.
+    const adopt = (book: Book) => {
+      if (!assetId || book.assetId !== null) return { book, created: false };
+      db.query("UPDATE books SET asset_id = $assetId WHERE id = $id").run({ assetId, id: book.id });
+      return { book: requireBook(db, book.id), created: false };
+    };
+
     const exact = bookWhere(db, "b.normalized_key = $key", { key });
-    if (exact) {
-      if (assetId && exact.assetId === null) {
-        db.query("UPDATE books SET asset_id = $assetId WHERE id = $id").run({
-          assetId,
-          id: exact.id,
-        });
-        return { book: requireBook(db, exact.id), created: false };
-      }
-      return { book: exact, created: false };
-    }
+    if (exact) return adopt(exact);
 
     if (author) {
       // A book known only by its title (e.g. from an unattributed caption) gains the author.
@@ -172,7 +174,7 @@ function resolveBook(
            WHERE substr(b.normalized_key, 1, length($prefix)) = $prefix LIMIT 2`,
         )
         .all({ prefix: `${titleKey}|` });
-      if (authored.length === 1 && authored[0]) return { book: authored[0], created: false };
+      if (authored.length === 1 && authored[0]) return adopt(authored[0]);
     }
 
     const inserted = db

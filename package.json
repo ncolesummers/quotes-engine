@@ -19,7 +19,8 @@
     "docs:prompt": "bun scripts/extraction-prompt.ts --doc",
     "dev:seed": "bun scripts/dev-seed.ts",
     "sync:instagram": "bun scripts/sync-instagram.ts",
-    "books:backfill": "bun scripts/books-backfill.ts"
+    "books:backfill": "bun scripts/books-backfill.ts",
+    "import:books": "bun scripts/import-books.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.105.1",
