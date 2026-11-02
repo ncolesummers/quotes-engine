@@ -63,6 +63,8 @@ export interface InstagramClientOptions {
   maxRetries?: number;
   /** First backoff delay; doubles on every retry (default 1000ms). */
   baseDelayMs?: number;
+  /** Clock in epoch ms, used for HTTP-date Retry-After headers (default Date.now). */
+  now?: () => number;
 }
 
 export interface InstagramApiErrorDetails {
@@ -187,11 +189,13 @@ function isRetryableStatus(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-function retryAfterMs(res: Response): number | null {
-  const header = res.headers.get("retry-after");
+/** Parses Retry-After as delta-seconds or an HTTP-date (past dates clamp to 0). */
+function retryAfterMs(res: Response, nowMs: number): number | null {
+  const header = res.headers.get("retry-after")?.trim();
   if (!header) return null;
-  const seconds = Number(header);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : null;
+  if (/^\d+$/.test(header)) return Number(header) * 1000;
+  const date = Date.parse(header);
+  return Number.isNaN(date) ? null : Math.max(0, date - nowMs);
 }
 
 async function readBody(res: Response): Promise<unknown> {
@@ -212,6 +216,7 @@ export function createInstagramClient(options: InstagramClientOptions): Instagra
     sleep = (ms) => Bun.sleep(ms),
     maxRetries = DEFAULT_MAX_RETRIES,
     baseDelayMs = DEFAULT_BASE_DELAY_MS,
+    now = Date.now,
   } = options;
   const host = (options.host ?? DEFAULT_GRAPH_HOST).replace(/\/+$/, "");
 
@@ -240,7 +245,8 @@ export function createInstagramClient(options: InstagramClientOptions): Instagra
       return new InstagramApiError(
         redact(
           `Instagram access token is invalid or expired (OAuthException code 190): ${detail}. ` +
-            "Generate a new token and update 1Password; see docs/instagram-setup.md.",
+            "Generate a new token, update 1Password and the Keychain copy; " +
+            "see docs/instagram-setup.md.",
         ),
         details,
       );
@@ -259,8 +265,11 @@ export function createInstagramClient(options: InstagramClientOptions): Instagra
       const canRetry = attempt < maxRetries;
 
       let res: Response;
+      let body: unknown;
       try {
         res = await fetch(url.toString());
+        // The body can still fail to download after fetch() resolves (e.g. connection reset).
+        body = await readBody(res);
       } catch (err) {
         if (canRetry) {
           await sleep(backoff);
@@ -270,10 +279,9 @@ export function createInstagramClient(options: InstagramClientOptions): Instagra
         throw new InstagramApiError(redact(`Network error calling ${path}: ${reason}`));
       }
 
-      const body = await readBody(res);
       if (!res.ok) {
         if (isRetryableStatus(res.status) && canRetry) {
-          await sleep(retryAfterMs(res) ?? backoff);
+          await sleep(retryAfterMs(res, now()) ?? backoff);
           continue;
         }
         throw errorFromResponse(res, body, path);

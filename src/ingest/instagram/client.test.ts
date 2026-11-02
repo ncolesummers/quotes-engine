@@ -336,6 +336,66 @@ describe("retries", () => {
     expect(calls).toHaveLength(2);
   });
 
+  test("honours a Retry-After header given as an HTTP-date, using the injected clock", async () => {
+    const account = await fixture("account");
+    const now = Date.parse("2026-11-01T12:00:00Z");
+    const { fetch } = fakeFetch([
+      () =>
+        json({ error: { message: "slow down" } }, 429, {
+          "retry-after": new Date(now + 5000).toUTCString(),
+        }),
+      () =>
+        json({ error: { message: "slow down" } }, 503, {
+          "retry-after": new Date(now - 60_000).toUTCString(),
+        }),
+      () => json(account),
+    ]);
+    const { sleep, delays } = recordingSleep();
+
+    await client(fetch, { sleep, now: () => now }).getAccount();
+
+    expect(delays).toEqual([5000, 0]);
+  });
+
+  test("retries when the response body fails to download", async () => {
+    const account = await fixture("account");
+    const brokenBody = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError("connection reset"));
+          },
+        }),
+        { status: 200 },
+      );
+    const { fetch, calls } = fakeFetch([brokenBody, () => json(account)]);
+
+    const result = await client(fetch).getAccount();
+
+    expect(result.username).toBe("quotes.engine.test");
+    expect(calls).toHaveLength(2);
+  });
+
+  test("a body download that keeps failing becomes a redacted InstagramApiError", async () => {
+    const brokenBody = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new TypeError(`reset while fetching ?access_token=${TOKEN}`));
+          },
+        }),
+        { status: 200 },
+      );
+    const { fetch, calls } = fakeFetch(Array.from({ length: 4 }, () => brokenBody));
+
+    const err = (await catchError(() => client(fetch).getAccount())) as InstagramApiError;
+
+    expect(err).toBeInstanceOf(InstagramApiError);
+    expect(err.message).toContain("Network error");
+    expect(err.message).not.toContain(TOKEN);
+    expect(calls).toHaveLength(4);
+  });
+
   test("retries a failed page in the middle of pagination", async () => {
     const page1 = await fixture("media-page-1");
     const page2 = await fixture("media-page-2");
