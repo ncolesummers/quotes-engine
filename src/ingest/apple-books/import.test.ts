@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { ANNOTATION_DB, LIBRARY_DB } from "../../../test/fixtures/apple-books/build";
 import { createTestDb } from "../../../test/helpers/db";
 import { seed } from "../../../test/helpers/seed";
+import { mergeBooks } from "../../server/repos/book-cleanup";
 import { type Book, findOrCreateBook } from "../../server/repos/books";
 import { normalizeQuote } from "../../server/text/normalize";
 import { classifyMatch, normalizedSimilarity } from "../../server/text/similarity";
@@ -234,6 +235,67 @@ describe("importAppleBooks", () => {
     expect(books()).toEqual([
       expect.objectContaining({ id: caption?.id, assetId: LANTERN.assetId }),
     ]);
+  });
+
+  describe("after merging two Apple Books records (#34)", () => {
+    // Only the kept book's asset id fits in `books.asset_id`; the dropped asset is found again
+    // through its key (same normalized title and author) or the alias the merge recorded.
+    function importMergeReimport(drop: Omit<AppleBook, "state">) {
+      const input = data(
+        [hl("u1", LANTERN.assetId, LAMP), hl("u2", drop.assetId, OIL)],
+        [LANTERN, drop],
+      );
+      importAppleBooks(db, input);
+      const [keep, dropped] = books();
+      if (!keep || !dropped) throw new Error("expected two books");
+      mergeBooks(db, keep.id, dropped.id);
+      const summary = importAppleBooks(db, input);
+      return { keep, summary };
+    }
+
+    test("a differently titled asset maps back to the kept book, not a new duplicate", () => {
+      const { keep, summary } = importMergeReimport({
+        assetId: "ASSET-LANTERN-ILLUSTRATED",
+        title: "The Lantern Keeper: Illustrated Edition",
+        author: LANTERN.author,
+      });
+      expect(summary.books).toEqual({ created: 0, merged: 0, existing: 2 });
+      expect(summary.highlights).toEqual({ new: 0, updated: 0, unchanged: 2, skipped: 0 });
+      expect(books()).toEqual([expect.objectContaining({ id: keep.id, assetId: LANTERN.assetId })]);
+      expect(highlightRows().map((h) => h.bookId)).toEqual([keep.id, keep.id]);
+    });
+
+    test("an asset whose key now matches the kept book (& vs and) maps to it by key", () => {
+      // Imported before keys folded "&": a separate row with an old-style key.
+      db.run(
+        `INSERT INTO books (asset_id, title, author, normalized_key, source)
+         VALUES ('ASSET-LANTERN-AMP', 'The Lantern & Keeper', 'Mira Okafor',
+           'the lantern keeper|mira okafor amp', 'apple_books')`,
+      );
+      const keep = findOrCreateBook(db, {
+        title: "The Lantern and Keeper",
+        author: LANTERN.author,
+        assetId: "ASSET-LANTERN-AND",
+        source: "apple_books",
+      });
+      const [dropped] = books();
+      if (!keep || !dropped) throw new Error("fixture");
+      mergeBooks(db, keep.id, dropped.id);
+      // Drop the alias so only the key can match.
+      db.run("DELETE FROM book_aliases");
+      const summary = importAppleBooks(
+        db,
+        data(
+          [hl("u1", "ASSET-LANTERN-AMP", LAMP)],
+          [{ assetId: "ASSET-LANTERN-AMP", title: "The Lantern & Keeper", author: LANTERN.author }],
+        ),
+      );
+      expect(summary.books).toEqual({ created: 0, merged: 0, existing: 1 });
+      expect(books()).toEqual([
+        expect.objectContaining({ id: keep.id, assetId: "ASSET-LANTERN-AND" }),
+      ]);
+      expect(highlightRows().map((h) => h.bookId)).toEqual([keep.id]);
+    });
   });
 
   test("skips highlights whose book isn't in the library", () => {

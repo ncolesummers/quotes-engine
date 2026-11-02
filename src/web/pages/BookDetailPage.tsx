@@ -1,9 +1,24 @@
-import { useQuery } from "@tanstack/react-query";
-import { CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "wouter";
-import { ApiError, type BookEntry, type BookEntryPosting, fetchBookDetail } from "@/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, MergeIcon, Trash2Icon } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { Link, useLocation, useSearchParams } from "wouter";
+import {
+  ApiError,
+  type BookDetail,
+  type BookEntry,
+  type BookEntryPosting,
+  type BookPatch,
+  type BookRef,
+  conflictIdOf,
+  deleteBook,
+  fetchBookDetail,
+  mergeBook,
+  type PossibleDuplicate,
+  updateBook,
+} from "@/api";
 import { BookProgress, bookStatsLine } from "@/components/BookProgress";
+import { InlineEdit } from "@/components/InlineEdit";
+import { MergeBookDialog } from "@/components/MergeBookDialog";
 import { PostedBadge } from "@/components/PostedBadge";
 import { PostThumbnail } from "@/components/PostThumbnail";
 import { Button } from "@/components/ui/button";
@@ -162,6 +177,103 @@ function EntryItem({ entry }: { entry: BookEntry }) {
   );
 }
 
+export const DUPLICATE_BOOK_MESSAGE =
+  "Another book already has this title and author — merge instead?";
+
+function PossibleDuplicates({
+  books,
+  onMerge,
+}: {
+  books: PossibleDuplicate[];
+  onMerge: (book: BookRef) => void;
+}) {
+  const headingId = useId();
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="flex max-w-xl flex-col gap-3 rounded-xl border border-dashed border-primary/40 bg-primary/[0.03] px-5 py-4"
+    >
+      <div className="flex flex-col gap-0.5">
+        <h2 id={headingId} className="font-serif text-lg font-medium">
+          Possible duplicates
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          These titles look like this one. If one is the same book, merge them.
+        </p>
+      </div>
+      <ul className="flex flex-col divide-y divide-border/60">
+        {books.map((b) => (
+          <li key={b.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <Link
+                href={`/books/${b.id}`}
+                className="truncate font-serif text-base underline-offset-4 hover:text-primary hover:underline"
+              >
+                {b.title ?? "Untitled book"}
+              </Link>
+              <span className="text-xs text-muted-foreground">
+                {b.author ?? <span className="italic">No author</span>}
+                {" · "}
+                {`${b.quoteCount} ${b.quoteCount === 1 ? "quote" : "quotes"}`}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onMerge(b)}
+              aria-label={`Merge “${b.title ?? "Untitled book"}” with this book`}
+            >
+              <MergeIcon aria-hidden />
+              Merge…
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function DeleteBook({ onDelete }: { onDelete: () => Promise<unknown> }) {
+  const [confirming, setConfirming] = useState(false);
+  const del = useMutation({ mutationFn: onDelete });
+  if (!confirming) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setConfirming(true)}
+        className="text-muted-foreground hover:text-destructive"
+      >
+        <Trash2Icon aria-hidden />
+        Delete book
+      </Button>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <span>Delete this empty book?</span>
+      <Button variant="destructive" size="sm" onClick={() => del.mutate()} disabled={del.isPending}>
+        {del.isPending ? "Deleting…" : "Yes, delete"}
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setConfirming(false)}
+        disabled={del.isPending}
+      >
+        Cancel
+      </Button>
+      {del.error && (
+        <p role="alert" className="basis-full text-destructive">
+          {del.error.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+type MergeState = { open: boolean; preselect?: BookRef; preselectId?: number };
+
 function HeaderSkeleton() {
   return (
     <div role="status" aria-busy="true" aria-label="Loading book" className="animate-pulse">
@@ -176,6 +288,9 @@ export function BookDetailPage({ id: rawId }: { id: string }) {
   const id = Number(rawId);
   const valid = Number.isSafeInteger(id) && id > 0;
   const { show, setShow } = useShowFilter();
+  const queryClient = useQueryClient();
+  const [, navigate] = useLocation();
+  const [merge, setMerge] = useState<MergeState>({ open: false });
   const query = useQuery({
     queryKey: queryKeys.books.detail(id),
     queryFn: () => fetchBookDetail(id),
@@ -215,7 +330,59 @@ export function BookDetailPage({ id: rawId }: { id: string }) {
     );
   }
 
-  const { book, entries } = query.data;
+  const { book, entries, possibleDuplicates } = query.data;
+  const detailKey = queryKeys.books.detail(id);
+
+  const refreshLists = () => {
+    // Books (lists and details: issues and duplicate hints may change), quote rows' book refs.
+    queryClient.invalidateQueries({ queryKey: queryKeys.books.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.quotes.all });
+    queryClient.invalidateQueries({ queryKey: queryKeys.stats });
+  };
+
+  const save = (field: keyof BookPatch) => async (value: string | null) => {
+    const patch: BookPatch = field === "title" ? { title: value ?? "" } : { author: value };
+    const updated = await updateBook(id, patch);
+    queryClient.setQueryData<BookDetail>(detailKey, (prev) =>
+      prev
+        ? { ...prev, book: { ...prev.book, title: updated.title, author: updated.author } }
+        : prev,
+    );
+    refreshLists();
+  };
+
+  const renderSaveError = (error: Error) =>
+    error instanceof ApiError && error.status === 409 ? (
+      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 font-sans text-sm">
+        {DUPLICATE_BOOK_MESSAGE}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setMerge({ open: true, preselectId: conflictIdOf(error) ?? undefined })}
+        >
+          Merge instead
+        </Button>
+      </span>
+    ) : (
+      <span className="font-sans text-sm">{error.message}</span>
+    );
+
+  const onMerge = async (keepId: number, dropId: number) => {
+    const merged = await mergeBook(keepId, dropId);
+    queryClient.setQueryData(queryKeys.books.detail(keepId), merged);
+    queryClient.removeQueries({ queryKey: queryKeys.books.detail(dropId) });
+    refreshLists();
+    if (keepId !== id) navigate(`/books/${keepId}`);
+    return merged;
+  };
+
+  const onDelete = async () => {
+    await deleteBook(id);
+    queryClient.removeQueries({ queryKey: detailKey });
+    refreshLists();
+    navigate("/books");
+  };
+  const empty = entries.length === 0 && book.quoteCount === 0;
   const posted = entries.filter((e) => e.posted);
   const unposted = entries.filter((e) => !e.posted);
   const visible = show === "posted" ? posted : show === "unposted" ? unposted : entries;
@@ -228,18 +395,56 @@ export function BookDetailPage({ id: rawId }: { id: string }) {
   return (
     <div className="flex flex-col gap-10">
       <header className="flex flex-col gap-4">
-        {back}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {back}
+          <div className="flex items-center gap-2">
+            {empty && <DeleteBook onDelete={onDelete} />}
+            <Button variant="outline" size="sm" onClick={() => setMerge({ open: true })}>
+              <MergeIcon aria-hidden />
+              Merge with…
+            </Button>
+          </div>
+        </div>
         <div className="flex flex-col gap-1">
-          <h1 className="font-serif text-3xl leading-tight font-medium tracking-tight text-balance sm:text-4xl">
-            {book.title ?? "Untitled book"}
-          </h1>
-          {book.author && <p className="text-base text-muted-foreground">{book.author}</p>}
+          <InlineEdit
+            noun="title"
+            label="Title"
+            value={book.title}
+            required
+            onSave={save("title")}
+            renderError={renderSaveError}
+            inputClassName="font-serif text-2xl"
+          >
+            {(title) => (
+              <h1 className="inline font-serif text-3xl leading-tight font-medium tracking-tight text-balance sm:text-4xl">
+                {title}
+              </h1>
+            )}
+          </InlineEdit>
+          <div className="text-base text-muted-foreground">
+            <InlineEdit
+              noun="author"
+              label="Author"
+              value={book.author}
+              onSave={save("author")}
+              renderError={renderSaveError}
+            >
+              {(author) => <span>{author}</span>}
+            </InlineEdit>
+          </div>
         </div>
         <div className="flex max-w-md flex-col gap-2">
           <p className="text-sm text-muted-foreground tabular-nums">{bookStatsLine(book)}</p>
           <BookProgress book={book} />
         </div>
       </header>
+
+      {possibleDuplicates.length > 0 && (
+        <PossibleDuplicates
+          books={possibleDuplicates}
+          onMerge={(other) => setMerge({ open: true, preselect: other })}
+        />
+      )}
 
       <section aria-label="Quotes and highlights" className="flex flex-col gap-5">
         <ToggleGroup
@@ -280,6 +485,15 @@ export function BookDetailPage({ id: rawId }: { id: string }) {
           </ol>
         )}
       </section>
+
+      <MergeBookDialog
+        open={merge.open}
+        onOpenChange={(open) => setMerge((m) => ({ ...m, open }))}
+        book={book}
+        preselect={merge.preselect}
+        preselectId={merge.preselectId}
+        onMerge={onMerge}
+      />
     </div>
   );
 }

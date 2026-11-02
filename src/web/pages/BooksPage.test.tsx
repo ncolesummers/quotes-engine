@@ -102,4 +102,36 @@ describe("BooksPage", () => {
     renderWithProviders(<AppRoutes />, { path: "/books" });
     expect(await screen.findByText(/No books yet/)).toBeDefined();
   });
+
+  test("“Needs attention” filters to books with issues and labels each issue", async () => {
+    const flagged = [
+      bookSummary({ id: 4, title: "IQ84", issues: ["possible_duplicate"] }),
+      bookSummary({ id: 5, title: "The Jesus of Suburbia", author: null, issues: ["no_author"] }),
+      bookSummary({ id: 6, title: "The Wheel of Time", issues: ["series_title"] }),
+    ];
+    fetchMock = mockFetch((url) =>
+      json({ items: url.searchParams.get("attention") === "1" ? flagged : books }),
+    );
+    const { location } = renderWithProviders(<AppRoutes />, { path: "/books" });
+    await screen.findByText("Dune");
+
+    const toggle = screen.getByRole("button", { name: /needs attention/i });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(toggle);
+
+    await screen.findByText("IQ84");
+    expect(screen.queryByText("Dune")).toBeNull();
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(location.history?.at(-1)).toBe("/books?attention=1");
+    expect(card("IQ84").getByText("Possible duplicate")).toBeDefined();
+    expect(card("The Jesus of Suburbia").getByText("No author")).toBeDefined();
+    expect(card("The Wheel of Time").getByText("Series name?")).toBeDefined();
+  });
+
+  test("reads the attention filter from the URL", async () => {
+    fetchMock = mockFetch(() => json({ items: [] }));
+    renderWithProviders(<AppRoutes />, { path: "/books?attention=1" });
+    expect(await screen.findByText(/Nothing needs attention/)).toBeDefined();
+    expect(fetchMock.callsTo("/api/books")[0]?.searchParams.get("attention")).toBe("1");
+  });
 });

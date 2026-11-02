@@ -1,5 +1,6 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { bookKey, bookTitleKey } from "../text/book-key";
+import { findDuplicateHints, looksLikeSeries } from "../text/book-title";
 import { HIGHLIGHT_POSTED_SQL } from "./highlights";
 import { likeContains } from "./quotes";
 
@@ -39,7 +40,15 @@ export interface ListBooksParams {
   /** Literal substring of the title or author (SQLite LIKE). */
   q?: string;
   sort: BookSort;
+  /** Only books with at least one `BookIssue`. */
+  attention?: boolean;
 }
+
+/**
+ * Why a book may need a look (#34): no author, a title like another book's (see
+ * `findDuplicateHints`), or a title that reads like a series name. Hints only.
+ */
+export type BookIssue = "no_author" | "possible_duplicate" | "series_title";
 
 export interface BookSummary {
   id: number;
@@ -54,6 +63,14 @@ export interface BookSummary {
   /** Highlights from the book that aren't posted and aren't one of its quotes. */
   unpostedHighlightCount: number;
   lastPostedAt: string | null;
+  issues: BookIssue[];
+}
+
+/** Another book whose title is similar enough to be the same book. */
+export interface PossibleDuplicate extends BookRef {
+  quoteCount: number;
+  /** Title similarity, 0..1 (see `titleSimilarity`). */
+  score: number;
 }
 
 export interface BookEntryPosting {
@@ -87,6 +104,8 @@ export interface BookDetail {
   book: BookSummary;
   /** Posted quotes (latest posting first), then unposted quotes, then unposted highlights. */
   entries: BookEntry[];
+  /** Best match first. */
+  possibleDuplicates: PossibleDuplicate[];
 }
 
 export interface BackfillSummary {
@@ -116,7 +135,21 @@ export function getBookRef(db: Database, id: number | null): BookRef | null {
   return book && { id: book.id, title: book.title, author: book.author };
 }
 
-function requireBook(db: Database, id: number): Book {
+/** The book recorded under a merged-away asset id or key (see migration 0004), or null. */
+function aliasedBook(db: Database, kind: "asset" | "key", value: string): Book | null {
+  return bookWhere(
+    db,
+    "b.id = (SELECT book_id FROM book_aliases WHERE kind = $kind AND value = $value)",
+    { kind, value },
+  );
+}
+
+/** The book for an Apple Books asset id: its own, or one it was merged into. */
+export function bookForAsset(db: Database, assetId: string): Book | null {
+  return bookWhere(db, "b.asset_id = $assetId", { assetId }) ?? aliasedBook(db, "asset", assetId);
+}
+
+export function requireBook(db: Database, id: number): Book {
   const book = getBook(db, id);
   if (!book) throw new Error(`Book ${id} not found`);
   return book;
@@ -141,7 +174,7 @@ export function resolveBook(
     // caption import before `books:backfill` reuses them instead of creating a duplicate.
     keyUnkeyedBooks(db);
     if (assetId) {
-      const byAsset = bookWhere(db, "b.asset_id = $assetId", { assetId });
+      const byAsset = bookForAsset(db, assetId);
       if (byAsset) return { book: byAsset, created: false };
     }
 
@@ -154,6 +187,9 @@ export function resolveBook(
 
     const exact = bookWhere(db, "b.normalized_key = $key", { key });
     if (exact) return adopt(exact);
+    // The key of a book merged into another (e.g. "IQ84" into "1Q84").
+    const aliased = aliasedBook(db, "key", key);
+    if (aliased) return adopt(aliased);
 
     if (author) {
       // A book known only by its title (e.g. from an unattributed caption) gains the author.
@@ -246,19 +282,52 @@ const BOOK_SORT_SQL: Record<BookSort, string> = {
   recent: "lastPostedAt DESC NULLS LAST,",
 };
 
-export function listBooks(db: Database, { q, sort }: ListBooksParams): BookSummary[] {
+type SummaryRow = Omit<BookSummary, "issues">;
+type Hints = ReturnType<typeof findDuplicateHints>;
+
+/** Title-similarity hints across every book (see `findDuplicateHints`). */
+function duplicateHints(db: Database): Hints {
+  return findDuplicateHints(
+    db.query<{ id: number; title: string | null }, []>("SELECT id, title FROM books").all(),
+  );
+}
+
+function issuesOf(book: SummaryRow, hints: Hints): BookIssue[] {
+  const issues: BookIssue[] = [];
+  if (!book.author?.trim()) issues.push("no_author");
+  if (hints.has(book.id)) issues.push("possible_duplicate");
+  if (looksLikeSeries(book.title)) issues.push("series_title");
+  return issues;
+}
+
+export function listBooks(db: Database, { q, sort, attention }: ListBooksParams): BookSummary[] {
   const binds: Record<string, string> = {};
   let where = "";
   if (q) {
     where = "WHERE b.title LIKE $q ESCAPE '\\' OR b.author LIKE $q ESCAPE '\\'";
     binds.q = likeContains(q);
   }
-  return db
-    .query<BookSummary, SQLQueryBindings>(
+  const hints = duplicateHints(db);
+  const books = db
+    .query<SummaryRow, SQLQueryBindings>(
       `${SUMMARY_SQL} ${where}
        ORDER BY ${BOOK_SORT_SQL[sort]} b.title COLLATE NOCASE NULLS LAST, b.id`,
     )
-    .all(binds);
+    .all(binds)
+    .map((b) => ({ ...b, issues: issuesOf(b, hints) }));
+  return attention ? books.filter((b) => b.issues.length > 0) : books;
+}
+
+function possibleDuplicates(db: Database, id: number, hints: Hints): PossibleDuplicate[] {
+  const getRef = db.query<Omit<PossibleDuplicate, "score">, { id: number }>(
+    `SELECT b.id, b.title, b.author,
+       (SELECT COUNT(*) FROM quotes q WHERE q.book_id = b.id) AS quoteCount
+     FROM books b WHERE b.id = $id`,
+  );
+  return (hints.get(id) ?? []).flatMap(({ id: otherId, score }) => {
+    const ref = getRef.get({ id: otherId });
+    return ref ? [{ ...ref, score }] : [];
+  });
 }
 
 interface PostingRow extends BookEntryPosting {
@@ -267,8 +336,10 @@ interface PostingRow extends BookEntryPosting {
 
 /** A book's summary plus every quote and unposted highlight from it. Null if missing. */
 export function getBookDetail(db: Database, id: number): BookDetail | null {
-  const book = db.query<BookSummary, { id: number }>(`${SUMMARY_SQL} WHERE b.id = $id`).get({ id });
-  if (!book) return null;
+  const row = db.query<SummaryRow, { id: number }>(`${SUMMARY_SQL} WHERE b.id = $id`).get({ id });
+  if (!row) return null;
+  const hints = duplicateHints(db);
+  const book: BookSummary = { ...row, issues: issuesOf(row, hints) };
 
   const quotes = db
     .query<
@@ -348,7 +419,11 @@ export function getBookDetail(db: Database, id: number): BookDetail | null {
       postings: [],
     }));
 
-  return { book, entries: [...posted, ...unposted, ...highlights] };
+  return {
+    book,
+    entries: [...posted, ...unposted, ...highlights],
+    possibleDuplicates: possibleDuplicates(db, id, hints),
+  };
 }
 
 /**

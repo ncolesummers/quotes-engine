@@ -24,11 +24,23 @@ function parseSort(value: string | null): QuoteSort {
   return SORTS.some((s) => s.value === value) ? (value as QuoteSort) : "recent";
 }
 
-/** `?q=` (see `useUrlSearch`) and `?sort=` drive the search. */
+/** `?q=` (see `useUrlSearch`), `?sort=` and `?nobook=1` drive the search. */
 function useQuoteSearch() {
   const [params, setParams] = useSearchParams();
   const sort = parseSort(params.get("sort"));
+  const noBook = params.get("nobook") === "1";
   const { q, draft, setDraft } = useUrlSearch(SEARCH_DEBOUNCE_MS);
+
+  const setNoBook = (value: boolean) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set("nobook", "1");
+        else next.delete("nobook");
+        return next;
+      },
+      { replace: true },
+    );
 
   const setSort = (value: QuoteSort) =>
     setParams(
@@ -41,7 +53,7 @@ function useQuoteSearch() {
       { replace: true },
     );
 
-  return { q, sort, draft, setDraft, setSort };
+  return { q, sort, noBook, draft, setDraft, setSort, setNoBook };
 }
 
 function ResultSkeleton() {
@@ -55,14 +67,14 @@ function ResultSkeleton() {
 }
 
 export function SearchPage() {
-  const { q, sort, draft, setDraft, setSort } = useQuoteSearch();
+  const { q, sort, noBook, draft, setDraft, setSort, setNoBook } = useQuoteSearch();
   const inputId = useId();
   const sortId = useId();
 
   const query = useInfiniteQuery({
-    queryKey: queryKeys.quotes.search({ q, sort, limit: PAGE_SIZE }),
+    queryKey: queryKeys.quotes.search({ q, sort, noBook, limit: PAGE_SIZE }),
     queryFn: ({ pageParam }) =>
-      fetchQuotes({ q: q || undefined, sort, limit: PAGE_SIZE, offset: pageParam }),
+      fetchQuotes({ q: q || undefined, sort, noBook, limit: PAGE_SIZE, offset: pageParam }),
     initialPageParam: 0,
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((n, p) => n + p.items.length, 0);
@@ -103,9 +115,21 @@ export function SearchPage() {
             {query.isSuccess &&
               (q
                 ? `${formatNumber(total)} ${total === 1 ? "match" : "matches"} for “${q}”`
-                : `${formatNumber(total)} ${total === 1 ? "quote" : "quotes"} in the archive`)}
+                : `${formatNumber(total)} ${total === 1 ? "quote" : "quotes"} ${
+                    noBook ? "without a book" : "in the archive"
+                  }`)}
           </p>
           <div className="flex items-center gap-2">
+            <Button
+              variant={noBook ? "default" : "outline"}
+              size="sm"
+              aria-pressed={noBook}
+              onClick={() => setNoBook(!noBook)}
+              title="Quotes not linked to any book"
+              className="h-8"
+            >
+              No book
+            </Button>
             <label htmlFor={sortId}>Sort</label>
             <select
               id={sortId}

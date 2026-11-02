@@ -134,6 +134,7 @@ export function bookSummary(overrides: Record<string, unknown> = {}) {
     postedCount: 2,
     unpostedHighlightCount: 1,
     lastPostedAt: "2026-10-25T12:00:00.000Z",
+    issues: [],
     ...overrides,
   };
 }

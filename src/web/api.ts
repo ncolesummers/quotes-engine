@@ -156,6 +156,8 @@ export interface QuoteSearchParams {
   book?: string;
   posted?: "yes" | "no";
   minPostings?: number;
+  /** Only quotes not linked to a book. */
+  noBook?: boolean;
   sort?: QuoteSort;
   limit?: number;
   offset?: number;
@@ -172,6 +174,8 @@ export interface Stats {
 
 export type BookSource = "apple_books" | "caption" | "manual";
 export type BookSort = "title" | "quotes" | "posted" | "recent";
+/** Why a book may need a look ("Needs attention"); hints only. */
+export type BookIssue = "no_author" | "possible_duplicate" | "series_title";
 
 /** One book of `GET /api/books`. */
 export interface BookSummary {
@@ -186,6 +190,27 @@ export interface BookSummary {
   /** Highlights not posted and not already one of the book's quotes. */
   unpostedHighlightCount: number;
   lastPostedAt: string | null;
+  issues: BookIssue[];
+}
+
+/** Another book with a similar title (`GET /api/books/:id`). */
+export interface PossibleDuplicate extends BookRef {
+  quoteCount: number;
+  /** Title similarity, 0–1. */
+  score: number;
+}
+
+/** A book record (`PATCH /api/books/:id`). */
+export interface Book extends BookRef {
+  assetId: string | null;
+  normalizedKey: string | null;
+  source: BookSource;
+}
+
+/** Editable book fields; null clears the author. */
+export interface BookPatch {
+  title?: string;
+  author?: string | null;
 }
 
 export interface BookEntryPosting {
@@ -217,26 +242,36 @@ export interface BookEntry {
 export interface BookDetail {
   book: BookSummary;
   entries: BookEntry[];
+  /** Best match first. */
+  possibleDuplicates: PossibleDuplicate[];
 }
 
 export interface BookListParams {
   q?: string;
   sort?: BookSort;
+  /** Only books with issues. */
+  attention?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Endpoints
 
-export function fetchQuotes(params: QuoteSearchParams = {}): Promise<Page<QuoteSearchItem>> {
-  return apiGet("/api/quotes", { ...params });
+export function fetchQuotes({
+  noBook,
+  ...params
+}: QuoteSearchParams = {}): Promise<Page<QuoteSearchItem>> {
+  return apiGet("/api/quotes", { ...params, noBook: noBook ? 1 : undefined });
 }
 
 export function fetchStats(): Promise<Stats> {
   return apiGet("/api/stats");
 }
 
-export function fetchBooks(params: BookListParams = {}): Promise<{ items: BookSummary[] }> {
-  return apiGet("/api/books", { ...params });
+export function fetchBooks({
+  attention,
+  ...params
+}: BookListParams = {}): Promise<{ items: BookSummary[] }> {
+  return apiGet("/api/books", { ...params, attention: attention ? 1 : undefined });
 }
 
 export function fetchBookDetail(id: number): Promise<BookDetail> {
@@ -261,7 +296,26 @@ export function mergeQuote(keepId: number, dropId: number): Promise<QuoteDetail>
   return apiSend("POST", `/api/quotes/${keepId}/merge`, { dropId });
 }
 
-/** The quote a 409 from `updateQuote` collided with, or null. */
+/**
+ * PATCH a book's title/author. Rejects with `ApiError` status 409 when another book has the
+ * same title and author; `conflictIdOf(err)` then names that book.
+ */
+export async function updateBook(id: number, patch: BookPatch): Promise<Book> {
+  const { book } = await apiSend<{ book: Book }>("PATCH", `/api/books/${id}`, patch);
+  return book;
+}
+
+/** Merge book `dropId` into `keepId` (drop is deleted); resolves to keep's refreshed detail. */
+export function mergeBook(keepId: number, dropId: number): Promise<BookDetail> {
+  return apiSend("POST", `/api/books/${keepId}/merge`, { dropId });
+}
+
+/** Delete a book with no quotes or highlights (409 otherwise). */
+export function deleteBook(id: number): Promise<{ id: number }> {
+  return apiSend("DELETE", `/api/books/${id}`);
+}
+
+/** The quote (or book) a 409 from `updateQuote` (or `updateBook`) collided with, or null. */
 export function conflictIdOf(err: unknown): number | null {
   if (!(err instanceof ApiError) || err.status !== 409) return null;
   const id = err.details.conflictId;

@@ -1,8 +1,8 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { SearchIcon } from "lucide-react";
 import { useId, useState } from "react";
-import { Link } from "wouter";
-import { type BookSort, type BookSummary, fetchBooks } from "@/api";
+import { Link, useSearchParams } from "wouter";
+import { type BookIssue, type BookSort, type BookSummary, fetchBooks } from "@/api";
 import { BookProgress, bookStatsLine } from "@/components/BookProgress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,45 @@ const SORTS: { value: BookSort; label: string }[] = [
   { value: "quotes", label: "Most quotes" },
 ];
 
+export const ISSUE_LABELS: Record<BookIssue, string> = {
+  no_author: "No author",
+  possible_duplicate: "Possible duplicate",
+  series_title: "Series name?",
+};
+
+/** `?attention=1`, replaced in place so toggling adds no history. */
+function useAttentionFilter() {
+  const [params, setParams] = useSearchParams();
+  const attention = params.get("attention") === "1";
+  const setAttention = (on: boolean) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (on) next.set("attention", "1");
+        else next.delete("attention");
+        return next;
+      },
+      { replace: true },
+    );
+  return { attention, setAttention };
+}
+
+function IssueBadges({ issues }: { issues: BookIssue[] }) {
+  if (issues.length === 0) return null;
+  return (
+    <ul aria-label="Needs attention" className="flex flex-wrap gap-1.5">
+      {issues.map((issue) => (
+        <li
+          key={issue}
+          className="rounded-full border border-dashed border-primary/40 px-2 py-0.5 text-xs text-primary"
+        >
+          {ISSUE_LABELS[issue]}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function BookCard({ book }: { book: BookSummary }) {
   return (
     <article className="group relative flex h-full flex-col gap-3 rounded-xl border border-border/70 bg-card px-5 py-5 shadow-xs transition-colors hover:border-primary/40">
@@ -33,6 +72,7 @@ function BookCard({ book }: { book: BookSummary }) {
         </h2>
         {book.author && <p className="text-sm text-muted-foreground">{book.author}</p>}
       </div>
+      <IssueBadges issues={book.issues} />
       <div className="mt-auto flex flex-col gap-2 pt-2">
         <p className="text-xs text-muted-foreground tabular-nums">{bookStatsLine(book)}</p>
         <BookProgress book={book} />
@@ -61,12 +101,13 @@ function CardSkeleton() {
 export function BooksPage() {
   const { q, draft, setDraft } = useUrlSearch(BOOK_SEARCH_DEBOUNCE_MS);
   const [sort, setSort] = useState<BookSort>("title");
+  const { attention, setAttention } = useAttentionFilter();
   const inputId = useId();
   const sortId = useId();
 
   const query = useQuery({
-    queryKey: queryKeys.books.list({ q, sort }),
-    queryFn: () => fetchBooks({ q: q || undefined, sort }),
+    queryKey: queryKeys.books.list({ q, sort, attention }),
+    queryFn: () => fetchBooks({ q: q || undefined, sort, attention }),
     placeholderData: keepPreviousData,
   });
   const books = query.data?.items ?? [];
@@ -104,10 +145,20 @@ export function BooksPage() {
           <p aria-live="polite">
             {query.isSuccess &&
               `${formatNumber(books.length)} ${books.length === 1 ? "book" : "books"}${
-                q ? ` matching “${q}”` : ""
-              }`}
+                attention ? " needing attention" : ""
+              }${q ? ` matching “${q}”` : ""}`}
           </p>
           <div className="flex items-center gap-2">
+            <Button
+              variant={attention ? "default" : "outline"}
+              size="sm"
+              aria-pressed={attention}
+              onClick={() => setAttention(!attention)}
+              title="No author, a possible duplicate, or a series name as the title"
+              className="h-8"
+            >
+              Needs attention
+            </Button>
             <label htmlFor={sortId}>Sort</label>
             <select
               id={sortId}
@@ -151,12 +202,20 @@ export function BooksPage() {
       ) : books.length === 0 ? (
         <div className="rounded-xl border border-dashed px-6 py-14 text-center">
           <p className="font-serif text-xl italic">
-            {q ? `No books match “${q}”.` : "No books yet."}
+            {attention
+              ? q
+                ? `No books matching “${q}” need attention.`
+                : "Nothing needs attention."
+              : q
+                ? `No books match “${q}”.`
+                : "No books yet."}
           </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            {q
-              ? "Try part of the title or the author’s name."
-              : "Books appear as quotes with a source are imported (or run books:backfill)."}
+            {attention
+              ? "Every book has an author, a distinct title, and isn’t named after a series."
+              : q
+                ? "Try part of the title or the author’s name."
+                : "Books appear as quotes with a source are imported (or run books:backfill)."}
           </p>
         </div>
       ) : (
