@@ -1,6 +1,6 @@
 -- Quote pairs a reviewer marked "not a duplicate" (#17), so the duplicate scan stops
--- suggesting them. Stored once per pair with the lower id first; a merged-away quote takes
--- its dismissals with it.
+-- suggesting them. Stored once per pair with the lower id first. mergeQuotes copies the
+-- dropped quote's dismissals onto the kept quote; the cascade then removes the originals.
 CREATE TABLE quote_not_duplicates (
   a_id INTEGER NOT NULL REFERENCES quotes (id) ON DELETE CASCADE,
   b_id INTEGER NOT NULL REFERENCES quotes (id) ON DELETE CASCADE,

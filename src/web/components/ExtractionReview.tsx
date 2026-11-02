@@ -5,7 +5,7 @@ import {
   ExternalLinkIcon,
   XIcon,
 } from "lucide-react";
-import { type Ref, useRef } from "react";
+import { type Ref, useRef, useState } from "react";
 import { ApiError, conflictIdOf, type LinkMethod, type QuotePatch, type ReviewLink } from "@/api";
 import { InlineEdit, type InlineEditHandle } from "@/components/InlineEdit";
 import { PostThumbnail } from "@/components/PostThumbnail";
@@ -62,6 +62,7 @@ export function ExtractionReview({
   const date = formatDate(post.postedAt);
   const save = (field: keyof QuotePatch) => (value: string | null) => onEdit({ [field]: value });
   const merging = useRef(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
 
   return (
     <article
@@ -174,8 +175,11 @@ export function ExtractionReview({
                       onClick={async () => {
                         if (merging.current) return;
                         merging.current = true;
+                        setMergeError(null);
                         try {
                           await onMergeInto(conflictId);
+                        } catch (err) {
+                          setMergeError(err instanceof Error ? err.message : String(err));
                         } finally {
                           merging.current = false;
                         }
@@ -183,6 +187,11 @@ export function ExtractionReview({
                     >
                       Merge into #{conflictId}
                     </Button>
+                    {mergeError && (
+                      <span role="alert" className="basis-full text-destructive">
+                        {mergeError}
+                      </span>
+                    )}
                   </span>
                 );
               }}

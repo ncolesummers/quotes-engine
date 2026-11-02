@@ -212,6 +212,173 @@ describe("ReviewPage — extractions", () => {
     expect(screen.getByRole("article", { name: /post 10/i })).toBeDefined();
   });
 
+  test("a link whose action failed while another was in flight can be retried", async () => {
+    const state = fakeServer({ links: twoLinks() });
+    const fake = fetchMock as MockedFetch;
+    fake.restore();
+    let failFirst: (() => void) | undefined;
+    fetchMock = mockFetch((url, init) => {
+      if (init?.method === "POST" && url.pathname === "/api/review/10/1" && !failFirst) {
+        return new Promise((resolve) => {
+          failFirst = () => resolve(json({ error: "Database is locked" }, 500));
+        });
+      }
+      if (init?.method === "POST" && url.pathname === "/api/review/11/2") {
+        state.links = state.links.filter((l) => l.postId !== 11);
+        return json({ postId: 11, quoteId: 2, action: "confirm" });
+      }
+      if (init?.method === "POST") return json({ postId: 10, quoteId: 1, action: "confirm" });
+      return json(state);
+    });
+    renderReview();
+    await screen.findByRole("article", { name: /post 10/i });
+    press("c"); // held, then fails
+    await screen.findByRole("article", { name: /post 11/i });
+    press("c"); // succeeds while the first is still in flight
+    await waitFor(() => expect(requestsTo("POST", "/api/review/11/2")).toHaveLength(1));
+    await waitFor(() => expect(failFirst).toBeDefined());
+    failFirst?.();
+    // The failed link comes back; confirming it again sends a new request.
+    await screen.findByRole("article", { name: /post 10/i });
+    await screen.findByRole("alert");
+    press("c");
+    await waitFor(() => expect(requestsTo("POST", "/api/review/10/1")).toHaveLength(2));
+  });
+
+  test("saving an edit doesn't refetch the queue while a confirm is in flight", async () => {
+    const state = fakeServer({ links: twoLinks() });
+    const inner = fetchMock as MockedFetch;
+    const handler = async (url: URL, init: RequestInit | undefined) => {
+      if (init?.method === "POST" && url.pathname === "/api/review/10/1" && !release) {
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        state.links = state.links.filter((l) => l.postId !== 10);
+        return json({ postId: 10, quoteId: 1, action: "confirm" });
+      }
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(init.body as string);
+        for (const l of state.links) if (l.quoteId === 2) Object.assign(l.quote, body);
+        return json(quoteDetail({ quote: { id: 2, ...body } }));
+      }
+      return json(url.pathname === "/api/stats" ? emptyStats : state);
+    };
+    let release: (() => void) | undefined;
+    inner.restore();
+    fetchMock = mockFetch(handler);
+    renderReview();
+    await screen.findByRole("article", { name: /post 10/i });
+    press("c");
+    await screen.findByRole("article", { name: /post 11/i });
+    await waitFor(() => expect(release).toBeDefined());
+    const gets = requestsTo("GET", "/api/review").length;
+
+    press("e");
+    const box = await screen.findByRole("textbox", { name: /quote text/i });
+    fireEvent.change(box, { target: { value: "So it goes." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("So it goes.")).toBeDefined();
+    await new Promise((r) => setTimeout(r, 20));
+    // A refetch now would read the server before it applied the confirm and bring post 10 back.
+    expect(requestsTo("GET", "/api/review")).toHaveLength(gets);
+    expect(screen.queryByRole("article", { name: /post 10/i })).toBeNull();
+
+    release?.();
+    await waitFor(() => expect(requestsTo("GET", "/api/review").length).toBeGreaterThan(gets));
+    expect(screen.getByRole("article", { name: /post 11/i })).toBeDefined();
+  });
+
+  /**
+   * A server whose PATCH of quote 1 collides with quote 12, and whose `GET /api/review`
+   * hangs once `hold.on` is set, so the test sees the cache as the page left it.
+   */
+  function collidingServer(mergeResponse: () => Response) {
+    const state = { links: twoLinks(), duplicates: [] as Pair[] };
+    const hold = { on: false };
+    fetchMock = mockFetch((url, init) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.pathname === "/api/review") {
+        return hold.on ? new Promise<Response>(() => {}) : json(state);
+      }
+      if (method === "PATCH") {
+        return json({ error: "Another quote already has this text", conflictId: 12 }, 409);
+      }
+      if (method === "POST" && url.pathname === "/api/quotes/12/merge") {
+        hold.on = true;
+        return mergeResponse();
+      }
+      if (method === "POST") return json({ postId: 10, quoteId: 12, action: "confirm" });
+      return json(url.pathname === "/api/stats" ? emptyStats : quoteDetail());
+    });
+    return hold;
+  }
+
+  async function mergeIntoConflict() {
+    renderReview();
+    await screen.findByRole("article", { name: /post 10/i });
+    press("e");
+    const box = await screen.findByRole("textbox", { name: /quote text/i });
+    fireEvent.change(box, { target: { value: "So it goes." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(await screen.findByRole("button", { name: /merge into #12/i }));
+  }
+
+  test("a failed merge into the conflicting quote shows the error", async () => {
+    collidingServer(() => json({ error: "Quote 12 not found" }, 404));
+    await mergeIntoConflict();
+    expect(await screen.findByText(/quote 12 not found/i)).toBeDefined();
+  });
+
+  test("merging into the conflicting quote moves the queued link to it", async () => {
+    collidingServer(() =>
+      json(quoteDetail({ quote: { id: 12, text: "So it goes.", author: "Kurt Vonnegut" } })),
+    );
+    await mergeIntoConflict();
+    await waitFor(() => expect(screen.getByText("Quote #12")).toBeDefined());
+    press("c");
+    await waitFor(() =>
+      expect(requestsTo("POST", "/api/review/10/12")).toEqual([{ action: "confirm" }]),
+    );
+    expect(requestsTo("POST", "/api/review/10/1")).toEqual([]);
+  });
+
+  test("an edit shows on the Duplicates tab too, before any refetch", async () => {
+    const link = reviewLink({ postId: 10, quoteId: 4, quote: { text: "THE ONLY WAY" } });
+    const state = {
+      links: [link],
+      duplicates: [
+        {
+          a: duplicateQuote({ id: 4, text: "THE ONLY WAY" }),
+          b: duplicateQuote({ id: 9, text: "The only way." }),
+          score: 0.9,
+        },
+      ],
+    };
+    let hold = false;
+    fetchMock = mockFetch((url, init) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.pathname === "/api/review") {
+        return hold ? new Promise<Response>(() => {}) : json(state);
+      }
+      if (method === "PATCH") {
+        hold = true;
+        return json(quoteDetail({ quote: { id: 4, text: "The only way out." } }));
+      }
+      return json(url.pathname === "/api/stats" ? emptyStats : quoteDetail());
+    });
+    renderReview();
+    await screen.findByRole("article", { name: /post 10/i });
+    press("e");
+    const box = await screen.findByRole("textbox", { name: /quote text/i });
+    fireEvent.change(box, { target: { value: "The only way out." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("The only way out.");
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /duplicates/i }));
+    const card = await screen.findByRole("article", { name: /quotes #4 and #9/i });
+    expect(within(card).getByText("The only way out.")).toBeDefined();
+    expect(within(card).queryByText("THE ONLY WAY")).toBeNull();
+  });
+
   test("the author and book can be fixed inline", async () => {
     fakeServer({ links: twoLinks() });
     renderReview();

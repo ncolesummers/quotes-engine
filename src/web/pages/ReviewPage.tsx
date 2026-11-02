@@ -46,7 +46,7 @@ export function ReviewPage() {
       { replace: true },
     );
 
-  const { query, resolve, dismiss, merge, editQuote } = useReviewQueue();
+  const { query, resolve, dismiss, merge, editQuote, actionError } = useReviewQueue();
   const links = query.data?.links ?? [];
   const duplicates = query.data?.duplicates ?? [];
 
@@ -59,21 +59,16 @@ export function ReviewPage() {
 
   const [keep, setKeep] = useState<{ keep: DuplicateQuote; drop: DuplicateQuote } | null>(null);
   const editRef = useRef<InlineEditHandle>(null);
-  /** Links with a request in flight, so a double press doesn't send it twice. */
-  const pending = useRef(new Set<string>());
 
   const act = (target: ReviewLink | undefined, action: ReviewAction) => {
     if (!target) return;
-    const key = `${target.postId}-${target.quoteId}`;
-    if (pending.current.has(key)) return;
-    pending.current.add(key);
     setLinkIndex(li);
-    resolve.mutate({ link: target, action }, { onSettled: () => pending.current.delete(key) });
+    resolve(target, action);
   };
   const notDuplicate = () => {
     if (!pair) return;
     setPairIndex(pi);
-    dismiss.mutate(pair);
+    dismiss(pair);
   };
 
   useShortcuts(
@@ -92,8 +87,6 @@ export function ReviewPage() {
         },
     query.data !== undefined,
   );
-
-  const actionError = resolve.error ?? dismiss.error;
 
   return (
     <div className="flex flex-col gap-6 py-2">

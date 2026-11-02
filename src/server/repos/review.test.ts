@@ -94,4 +94,20 @@ describe("dismissDuplicatePair", () => {
     mergeQuotes(db, a.id, b.id);
     expect(db.query("SELECT COUNT(*) AS n FROM quote_not_duplicates").get()).toEqual({ n: 0 });
   });
+
+  test("a merged-away quote's other dismissals carry over to the kept quote", () => {
+    const { db, a, b, c } = nearDuplicates();
+    dismissDuplicatePair(db, b.id, c.id);
+    mergeQuotes(db, a.id, b.id);
+    const rows = db.query("SELECT a_id AS aId, b_id AS bId FROM quote_not_duplicates").all();
+    expect(rows).toEqual([{ aId: a.id, bId: c.id }]);
+  });
+
+  test("carried-over dismissals keep the lower id first", () => {
+    const { db, a, b, c } = nearDuplicates();
+    dismissDuplicatePair(db, a.id, b.id);
+    mergeQuotes(db, c.id, b.id);
+    const rows = db.query("SELECT a_id AS aId, b_id AS bId FROM quote_not_duplicates").all();
+    expect(rows).toEqual([{ aId: a.id, bId: c.id }]);
+  });
 });

@@ -1,4 +1,5 @@
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
 import {
   type DuplicatePair,
   dismissDuplicate,
@@ -16,6 +17,8 @@ import { queryKeys } from "@/lib/query";
 
 /** Every review mutation shares this key, so refetches wait until the last one settles. */
 const REVIEW_MUTATION = ["review"] as const;
+
+const linkKey = (l: { postId: number; quoteId: number }) => `${l.postId}-${l.quoteId}`;
 
 const sameLink = (x: ReviewLink, y: { postId: number; quoteId: number }) =>
   x.postId === y.postId && x.quoteId === y.quoteId;
@@ -59,61 +62,113 @@ async function removeOptimistically(
 export function useReviewQueue() {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: queryKeys.review, queryFn: fetchReview });
+  /**
+   * The last confirm/reject/dismiss failure. Kept here rather than read from `mutation.error`,
+   * which only tracks the latest call: an earlier failure would vanish once a later one passed.
+   */
+  const [actionError, setActionError] = useState<Error | null>(null);
+  /** Links with a request in flight, so a double press doesn't send it twice. */
+  const pendingLinks = useRef(new Set<string>());
 
-  const resolve = useMutation({
+  const resolveMutation = useMutation({
     mutationKey: REVIEW_MUTATION,
     mutationFn: ({ link, action }: { link: ReviewLink; action: ReviewAction }) =>
       resolveReviewLink(link.postId, link.quoteId, action),
-    onMutate: ({ link }) =>
-      removeOptimistically(
+    onMutate: ({ link }) => {
+      setActionError(null);
+      return removeOptimistically(
         queryClient,
         (q) => ({ ...q, links: q.links.filter((l) => !sameLink(l, link)) }),
         -1,
-      ),
-    onSettled: (_data, _error, { link }) => refreshAfterReview(queryClient, [link.quoteId]),
+      );
+    },
+    onError: (error) => setActionError(error),
+    // Hook-level callbacks run for every call; ones passed to `mutate` only for the latest.
+    onSettled: (_data, _error, { link }) => {
+      pendingLinks.current.delete(linkKey(link));
+      refreshAfterReview(queryClient, [link.quoteId]);
+    },
   });
 
-  const dismiss = useMutation({
+  /** Confirm or reject `link`; ignored while a request for the same link is in flight. */
+  const resolve = (link: ReviewLink, action: ReviewAction) => {
+    const key = linkKey(link);
+    if (pendingLinks.current.has(key)) return;
+    pendingLinks.current.add(key);
+    resolveMutation.mutate({ link, action });
+  };
+
+  const dismissMutation = useMutation({
     mutationKey: REVIEW_MUTATION,
     mutationFn: (pair: DuplicatePair) => dismissDuplicate(pair.a.id, pair.b.id),
-    onMutate: (pair) =>
-      removeOptimistically(queryClient, (q) => ({
+    onMutate: (pair) => {
+      setActionError(null);
+      return removeOptimistically(queryClient, (q) => ({
         ...q,
         duplicates: q.duplicates.filter((p) => !samePair(p, pair)),
-      })),
+      }));
+    },
+    onError: (error) => setActionError(error),
     onSettled: () => refreshAfterReview(queryClient, []),
   });
 
+  // Merge and edit share the review mutation key so their refetches wait for in-flight
+  // confirms/rejects/dismissals too, and vice versa.
+  const mergeMutation = useMutation({
+    mutationKey: REVIEW_MUTATION,
+    mutationFn: ({ keepId, dropId }: { keepId: number; dropId: number }) =>
+      mergeQuote(keepId, dropId),
+    onSuccess: async (detail, { keepId, dropId }) => {
+      const kept = {
+        id: keepId,
+        text: detail.quote.text,
+        author: detail.quote.author,
+        sourceTitle: detail.quote.sourceTitle,
+      };
+      await removeOptimistically(queryClient, (q) => ({
+        // The server moves the dropped quote's links onto the kept one, unless the kept quote
+        // is already on that post.
+        links: q.links.flatMap((l) => {
+          if (l.quoteId !== dropId) return [l];
+          if (q.links.some((o) => o.postId === l.postId && o.quoteId === keepId)) return [];
+          return [{ ...l, quoteId: keepId, quote: kept }];
+        }),
+        duplicates: q.duplicates.filter((p) => p.a.id !== dropId && p.b.id !== dropId),
+      }));
+      queryClient.setQueryData(queryKeys.quotes.detail(keepId), detail);
+      queryClient.removeQueries({ queryKey: queryKeys.quotes.detail(dropId) });
+    },
+    onSettled: (_data, _error, { keepId }) => refreshAfterReview(queryClient, [keepId]),
+  });
+
   /** Merge `dropId` into `keepId`; pairs involving the dropped quote leave the queue. */
-  const merge = async (keepId: number, dropId: number) => {
-    const detail = await mergeQuote(keepId, dropId);
-    await removeOptimistically(queryClient, (q) => ({
-      ...q,
-      duplicates: q.duplicates.filter((p) => p.a.id !== dropId && p.b.id !== dropId),
-    }));
-    queryClient.setQueryData(queryKeys.quotes.detail(keepId), detail);
-    queryClient.removeQueries({ queryKey: queryKeys.quotes.detail(dropId) });
-    refreshAfterReview(queryClient, [keepId]);
-    return detail;
-  };
+  const merge = (keepId: number, dropId: number) => mergeMutation.mutateAsync({ keepId, dropId });
 
-  /** PATCH a quote and show the change on every queued link to it. */
-  const editQuote = async (quoteId: number, patch: QuotePatch) => {
-    const quote = await updateQuote(quoteId, patch);
-    const fields = { text: quote.text, author: quote.author, sourceTitle: quote.sourceTitle };
-    queryClient.setQueryData<ReviewQueue>(queryKeys.review, (q) =>
-      q
-        ? {
-            ...q,
-            links: q.links.map((l) =>
-              l.quoteId === quoteId ? { ...l, quote: { ...l.quote, ...fields } } : l,
-            ),
-          }
-        : q,
-    );
-    refreshAfterReview(queryClient, [quoteId]);
-    return quote;
-  };
+  const editMutation = useMutation({
+    mutationKey: REVIEW_MUTATION,
+    mutationFn: ({ quoteId, patch }: { quoteId: number; patch: QuotePatch }) =>
+      updateQuote(quoteId, patch),
+    onSuccess: (quote, { quoteId }) => {
+      const fields = { text: quote.text, author: quote.author, sourceTitle: quote.sourceTitle };
+      const patchSide = <T extends { id: number }>(side: T): T =>
+        side.id === quoteId ? { ...side, ...fields } : side;
+      queryClient.setQueryData<ReviewQueue>(queryKeys.review, (q) =>
+        q
+          ? {
+              links: q.links.map((l) =>
+                l.quoteId === quoteId ? { ...l, quote: { ...l.quote, ...fields } } : l,
+              ),
+              duplicates: q.duplicates.map((p) => ({ ...p, a: patchSide(p.a), b: patchSide(p.b) })),
+            }
+          : q,
+      );
+    },
+    onSettled: (_data, _error, { quoteId }) => refreshAfterReview(queryClient, [quoteId]),
+  });
 
-  return { query, resolve, dismiss, merge, editQuote };
+  /** PATCH a quote and show the change everywhere it is queued. */
+  const editQuote = (quoteId: number, patch: QuotePatch) =>
+    editMutation.mutateAsync({ quoteId, patch });
+
+  return { query, resolve, dismiss: dismissMutation.mutate, merge, editQuote, actionError };
 }
