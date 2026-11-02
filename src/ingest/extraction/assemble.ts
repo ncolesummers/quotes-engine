@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { z } from "zod";
 import { type PostOcr, readPostOcr } from "../ocr/run";
+import { captionSegments, stripCaption, stripOuterQuotes } from "./caption";
 import {
   ClassificationFileSchema,
   type ClassificationResult,
@@ -56,28 +57,21 @@ export function joinOcrLines(lines: readonly string[]): string {
   return out;
 }
 
-/**
- * The caption as quote text: hashtags, `📖 Title — Author` lines and spacer lines (only dots or
- * similar punctuation) removed, whitespace tidied, paragraph breaks kept. `""` when nothing is left.
- */
-export function stripCaption(caption: string | null): string {
-  if (!caption) return "";
-  const lines = caption.split(/\r?\n/).map((line) => {
-    if (line.trim().startsWith("📖")) return "";
-    const cleaned = line
-      .replace(/(^|\s)#[\p{L}\p{N}_]+/gu, "$1")
-      .replace(/[ \t]+/g, " ")
-      .trim();
-    return /^[.·•\-_~*]*$/u.test(cleaned) ? "" : cleaned;
-  });
-  return lines
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 function round(n: number): number {
   return Math.round(n * 1000) / 1000;
+}
+
+/** Caption text for a caption-only quote: its `caption_lines` segments, or the whole caption. */
+function captionText(q: ClassifiedQuote, caption: string | null): string {
+  if (q.caption_lines === null) return stripCaption(caption);
+  const segments = captionSegments(caption);
+  const [start, end] = q.caption_lines;
+  if (end >= segments.length) {
+    throw new Error(
+      `caption_lines [${start}, ${end}] are out of range (caption has ${segments.length})`,
+    );
+  }
+  return segments.slice(start, end + 1).join(" ");
 }
 
 function assembleQuote(
@@ -87,7 +81,7 @@ function assembleQuote(
 ): ExtractedQuote {
   const base = { author: q.author, source: q.source };
   if (q.image === null || q.lines === null) {
-    const text = stripCaption(post.caption);
+    const text = stripOuterQuotes(captionText(q, post.caption));
     if (!text) throw new Error("from_caption quote, but the caption has no text besides tags");
     return { text, ...base, found_in: "caption", confidence: round(q.confidence) };
   }
@@ -104,7 +98,7 @@ function assembleQuote(
   }
 
   const picked = lines.slice(start, end + 1);
-  const text = joinOcrLines(picked.map((l) => l.text));
+  const text = stripOuterQuotes(joinOcrLines(picked.map((l) => l.text)));
   if (!text) throw new Error(`lines [${start}, ${end}] of image ${q.image} are empty`);
   const ocrConfidence = picked.reduce((sum, l) => sum + l.confidence, 0) / picked.length;
   return {

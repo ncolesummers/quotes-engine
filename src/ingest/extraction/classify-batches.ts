@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { listUnextractedPosts } from "../../server/repos/posts";
 import { readPostOcr } from "../ocr/run";
 import { batchName, chunk, DEFAULT_BATCH_SIZE, findMediaFiles, isMissingMedia } from "./batches";
+import { captionSegments } from "./caption";
 import { listExtractionFiles } from "./import";
 
 /** Where agents write classification results, relative to the extractions dir. */
@@ -24,6 +25,8 @@ export interface ClassificationBatchPost {
   ig_media_id: string;
   posted_at: string | null;
   caption: string | null;
+  /** Numbered caption segments (quoted spans split out, tags removed): `cap:L0 "…"`, ... */
+  caption_lines: string[];
   images: ClassificationBatchImage[];
 }
 
@@ -48,6 +51,11 @@ export interface WriteClassificationBatchesSummary {
   missingMedia: string[];
   /** Posts with media that isn't all OCR'd yet (run `bun run ocr`). */
   missingOcr: string[];
+}
+
+/** `cap:L0 "text"`: a caption segment reference followed by the segment as a JSON string. */
+export function formatCaptionLine(index: number, text: string): string {
+  return `cap:L${index} ${JSON.stringify(text)}`;
 }
 
 /** `img1:L0 "text"`: the line reference followed by the line as a JSON string. */
@@ -116,6 +124,7 @@ export function writeClassificationBatches(
       ig_media_id: post.igMediaId,
       posted_at: post.postedAt,
       caption,
+      caption_lines: captionSegments(caption).map((seg, i) => formatCaptionLine(i, seg)),
       images: files.map((file, i) => ({
         image: i + 1,
         file,

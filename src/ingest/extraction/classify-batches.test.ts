@@ -82,6 +82,7 @@ describe("writeClassificationBatches", () => {
           ig_media_id: "solo",
           posted_at: "2020-01-01T00:00:00.000Z",
           caption: "#bookstagram #joeabercrombie",
+          caption_lines: [],
           images: [
             {
               image: 1,
@@ -92,6 +93,19 @@ describe("writeClassificationBatches", () => {
         },
       ],
     });
+  });
+
+  test("numbers the caption's segments, quoted spans apart from commentary", () => {
+    upsertPost(db, {
+      igMediaId: "cap",
+      mediaType: "IMAGE",
+      caption: "“A quote.” My comment.\n#tag",
+    });
+    withOcr("cap", { "cap.jpg": [] });
+    write();
+    const [post] = readBatch("batch-001.json").posts;
+    expect(post.caption).toBe("“A quote.” My comment.\n#tag");
+    expect(post.caption_lines).toEqual([`cap:L0 "“A quote.”"`, `cap:L1 "My comment."`]);
   });
 
   test("numbers carousel images from 1 in media order, restarting line numbers per image", () => {

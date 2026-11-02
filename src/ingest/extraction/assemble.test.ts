@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OcrLine } from "../ocr/parse";
 import { type PostOcr, writePostOcr } from "../ocr/run";
-import { assembleClassifications, assembleResult, joinOcrLines, stripCaption } from "./assemble";
+import { assembleClassifications, assembleResult, joinOcrLines } from "./assemble";
 import type { ClassificationBatchPost } from "./classify-batches";
 import { parseExtractionFile } from "./import";
 import { ExtractionFileSchema } from "./schema";
@@ -29,6 +29,7 @@ const POST: ClassificationBatchPost = {
   ig_media_id: "p1",
   posted_at: null,
   caption: "Be the change you wish to see.\n📖 The Blade Itself — Joe Abercrombie\n#joeabercrombie",
+  caption_lines: [],
   images: [
     { image: 1, file: "p1_1.jpg", lines: [] },
     { image: 2, file: "p1_2.jpg", lines: [] },
@@ -60,28 +61,104 @@ describe("joinOcrLines", () => {
   });
 });
 
-describe("stripCaption", () => {
-  test("removes hashtags and 📖 attribution lines", () => {
-    expect(stripCaption(POST.caption)).toBe("Be the change you wish to see.");
-    expect(stripCaption("A line #tag inside.\n\nSecond para #x #y")).toBe(
-      "A line inside.\n\nSecond para",
-    );
-  });
-
-  test("removes spacer lines of dots and returns '' for nothing left", () => {
-    expect(stripCaption("Quote.\n.\n.\n#a #b")).toBe("Quote.");
-    expect(stripCaption("#a #b")).toBe("");
-    expect(stripCaption(null)).toBe("");
-  });
-});
-
 describe("assembleResult", () => {
+  const CAPTIONED: ClassificationBatchPost = {
+    ...POST,
+    caption:
+      "“An environment tells you how to live in it.” Jessyn says it like an observation.\n#tag",
+  };
+
+  test("a caption_lines range takes just those caption segments, without outer quote marks", () => {
+    const r = assembleResult(
+      {
+        ig_media_id: "p1",
+        no_quote: false,
+        quotes: [
+          {
+            ...Q,
+            image: null,
+            lines: null,
+            from_caption: true,
+            caption_lines: [0, 0],
+            confidence: 0.9,
+          },
+        ],
+      },
+      CAPTIONED,
+      OCR,
+    );
+    expect(r.quotes[0]).toEqual({
+      text: "An environment tells you how to live in it.",
+      ...Q,
+      found_in: "caption",
+      confidence: 0.9,
+    });
+  });
+
+  test("an out-of-range caption_lines range is an error", () => {
+    expect(() =>
+      assembleResult(
+        {
+          ig_media_id: "p1",
+          no_quote: false,
+          quotes: [
+            {
+              ...Q,
+              image: null,
+              lines: null,
+              from_caption: true,
+              caption_lines: [1, 2],
+              confidence: 1,
+            },
+          ],
+        },
+        CAPTIONED,
+        OCR,
+      ),
+    ).toThrow(/caption_lines \[1, 2\] are out of range/);
+  });
+
+  test("strips quote marks wrapping a whole OCR quote", () => {
+    const ocr: PostOcr = {
+      ig_media_id: "p1",
+      images: [{ file: "p1_1.jpg", path: "/m/p1_1.jpg", lines: [l("“Quoted"), l("text.”")] }],
+    };
+    const r = assembleResult(
+      {
+        ig_media_id: "p1",
+        no_quote: false,
+        quotes: [
+          {
+            ...Q,
+            caption_lines: null,
+            image: 1,
+            lines: [0, 1],
+            from_caption: false,
+            confidence: 1,
+          },
+        ],
+      },
+      POST,
+      ocr,
+    );
+    expect(r.quotes[0]?.text).toBe("Quoted text.");
+  });
+
   test("joins referenced lines across a hyphenated wrap into an image quote", () => {
     const r = assembleResult(
       {
         ig_media_id: "p1",
         no_quote: false,
-        quotes: [{ ...Q, image: 1, lines: [0, 2], from_caption: false, confidence: 1 }],
+        quotes: [
+          {
+            ...Q,
+            caption_lines: null,
+            image: 1,
+            lines: [0, 2],
+            from_caption: false,
+            confidence: 1,
+          },
+        ],
       },
       POST,
       OCR,
@@ -101,7 +178,16 @@ describe("assembleResult", () => {
       {
         ig_media_id: "p1",
         no_quote: false,
-        quotes: [{ ...Q, image: 1, lines: [0, 1], from_caption: false, confidence: 0.5 }],
+        quotes: [
+          {
+            ...Q,
+            caption_lines: null,
+            image: 1,
+            lines: [0, 1],
+            from_caption: false,
+            confidence: 0.5,
+          },
+        ],
       },
       POST,
       OCR,
@@ -114,7 +200,9 @@ describe("assembleResult", () => {
       {
         ig_media_id: "p1",
         no_quote: false,
-        quotes: [{ ...Q, image: 2, lines: [0, 0], from_caption: true, confidence: 1 }],
+        quotes: [
+          { ...Q, caption_lines: null, image: 2, lines: [0, 0], from_caption: true, confidence: 1 },
+        ],
       },
       POST,
       OCR,
@@ -127,7 +215,16 @@ describe("assembleResult", () => {
       {
         ig_media_id: "p1",
         no_quote: false,
-        quotes: [{ ...Q, image: null, lines: null, from_caption: true, confidence: 0.8 }],
+        quotes: [
+          {
+            ...Q,
+            caption_lines: null,
+            image: null,
+            lines: null,
+            from_caption: true,
+            confidence: 0.8,
+          },
+        ],
       },
       POST,
       OCR,
@@ -146,8 +243,22 @@ describe("assembleResult", () => {
         ig_media_id: "p1",
         no_quote: false,
         quotes: [
-          { ...Q, image: 1, lines: [0, 0], from_caption: false, confidence: 1 },
-          { ...Q, image: 2, lines: [0, 0], from_caption: false, confidence: 1 },
+          {
+            ...Q,
+            caption_lines: null,
+            image: 1,
+            lines: [0, 0],
+            from_caption: false,
+            confidence: 1,
+          },
+          {
+            ...Q,
+            caption_lines: null,
+            image: 2,
+            lines: [0, 0],
+            from_caption: false,
+            confidence: 1,
+          },
         ],
       },
       POST,
@@ -168,7 +279,7 @@ describe("assembleResult", () => {
     const res = (image: number, lines: [number, number]) => ({
       ig_media_id: "p1",
       no_quote: false,
-      quotes: [{ ...Q, image, lines, from_caption: false, confidence: 1 }],
+      quotes: [{ ...Q, caption_lines: null, image, lines, from_caption: false, confidence: 1 }],
     });
     expect(() => assembleResult(res(1, [1, 3]), POST, OCR)).toThrow(/out of range/);
     expect(() => assembleResult(res(3, [0, 0]), POST, OCR)).toThrow(/image 3/);
@@ -180,7 +291,16 @@ describe("assembleResult", () => {
         {
           ig_media_id: "p1",
           no_quote: false,
-          quotes: [{ ...Q, image: null, lines: null, from_caption: true, confidence: 1 }],
+          quotes: [
+            {
+              ...Q,
+              caption_lines: null,
+              image: null,
+              lines: null,
+              from_caption: true,
+              confidence: 1,
+            },
+          ],
         },
         { ...POST, caption: "#only #tags" },
         OCR,
@@ -244,12 +364,12 @@ describe("assembleClassifications", () => {
           {
             ig_media_id: "p1",
             no_quote: false,
-            quotes: [{ ...Q, image: 1, lines: [0, 2], confidence: 0.9 }],
+            quotes: [{ ...Q, caption_lines: null, image: 1, lines: [0, 2], confidence: 0.9 }],
           },
           {
             ig_media_id: "p2",
             no_quote: false,
-            quotes: [{ ...Q, image: 1, lines: [0, 5], confidence: 0.9 }],
+            quotes: [{ ...Q, caption_lines: null, image: 1, lines: [0, 5], confidence: 0.9 }],
           },
           { ig_media_id: "p3", no_quote: true, quotes: [] },
         ],
@@ -281,7 +401,10 @@ describe("assembleClassifications", () => {
       JSON.stringify({
         results: [
           { ig_media_id: "nope", no_quote: true },
-          { ig_media_id: "p2", quotes: [{ ...Q, image: 1, lines: [0, 0], confidence: 1 }] },
+          {
+            ig_media_id: "p2",
+            quotes: [{ ...Q, caption_lines: null, image: 1, lines: [0, 0], confidence: 1 }],
+          },
         ],
       }),
     );

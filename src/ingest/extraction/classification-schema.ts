@@ -25,6 +25,11 @@ export const ClassifiedQuoteSchema = z
       .transform((v) => v ?? null),
     /** True when the quote is (also) in the caption. */
     from_caption: z.boolean().default(false),
+    /** Inclusive `[start, end]` caption segment indexes (`cap:L<n>`), for a caption-only quote. */
+    caption_lines: z
+      .tuple([z.number().int().min(0), z.number().int().min(0)])
+      .nullish()
+      .transform((v) => v ?? null),
     author: nullableString,
     source: nullableString,
     confidence: z.number().min(0).max(1),
@@ -35,6 +40,12 @@ export const ClassifiedQuoteSchema = z
   })
   .refine((q) => q.lines === null || q.lines[0] <= q.lines[1], {
     message: "`lines` must be [start, end] with start <= end",
+  })
+  .refine((q) => q.caption_lines === null || (q.from_caption && q.lines === null), {
+    message: "`caption_lines` is only for a caption-only quote (`from_caption: true`, no `lines`)",
+  })
+  .refine((q) => q.caption_lines === null || q.caption_lines[0] <= q.caption_lines[1], {
+    message: "`caption_lines` must be [start, end] with start <= end",
   })
   .refine((q) => q.lines !== null || q.from_caption, {
     message: "a quote needs `image` + `lines`, or `from_caption: true`",

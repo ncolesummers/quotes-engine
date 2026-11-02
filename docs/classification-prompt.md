@@ -20,7 +20,7 @@ Read the batch file:
 
     /abs/path/to/data/extractions/todo/batch-NNN.json
 
-It looks like `{"posts": [{"ig_media_id", "posted_at", "caption", "images": [{"image": 1, "file", "lines": [...]}]}]}`. `caption` may be null. `images` has one entry per image of the post, numbered from 1; carousels have several. Each entry of `lines` is one OCR line, prefixed with its reference, top to bottom:
+It looks like `{"posts": [{"ig_media_id", "posted_at", "caption", "caption_lines": [...], "images": [{"image": 1, "file", "lines": [...]}]}]}`. `caption` may be null. `images` has one entry per image of the post, numbered from 1; carousels have several. Each entry of `lines` is one OCR line, prefixed with its reference, top to bottom:
 
     img1:L0 "Once you've got a"
     img1:L1 "task to do, it's bet-"
@@ -30,11 +30,16 @@ It looks like `{"posts": [{"ig_media_id", "posted_at", "caption", "images": [{"i
 
 `img1:L0` means image 1, line 0. Line numbers start at 0 on every image. OCR may garble decorative fonts or pick up stray words (watermarks, handles, page numbers); judge by meaning.
 
+`caption_lines` is the caption split into numbered segments, with hashtags and `📖` lines removed. A “curly-quoted” span is its own segment, apart from any commentary or attribution next to it:
+
+    cap:L0 "“If you only read the books that everyone else is reading, you can only think what everyone else is thinking.”"
+    cap:L1 "― Haruki Murakami, Norwegian Wood"
+
 ## For every post
 
 1. Read the caption and every image's lines. On a carousel each image can carry a different quote.
 2. **Find each quote** and give its line range on one image: `"image": N` and `"lines": [start, end]`, both ends **inclusive**, taken from the `imgN:L<start>` and `imgN:L<end>` references. In the example above the quote is `"image": 1, "lines": [0, 3]`. Include every line of the quote and nothing else: leave out an attribution line (like `img1:L4 "— Joe Abercrombie"`), a title, a watermark or a handle above or below it. A quote that runs over two images is two entries, one per image.
-3. **Quotes in the caption.** If the quote is (also) written in the caption, set `"from_caption": true`. When it is in the caption only, give no `"image"` or `"lines"` (code then takes the caption with its hashtags and `📖` lines removed). When it is in both, give the image's line range too. Otherwise set `"from_caption": false`.
+3. **Quotes in the caption.** If the quote is (also) written in the caption, set `"from_caption": true`. When it is in the caption only, give no `"image"` or `"lines"`; instead give `"caption_lines": [start, end]` (inclusive, from the `cap:L<n>` references) covering exactly the quote's segments, leaving out commentary and attribution segments. In the example above that is `"caption_lines": [0, 0]`. When it is in both, give the image's line range and no `"caption_lines"`. Otherwise set `"from_caption": false`.
 4. **Attribution (`author`, `source`)**:
    - If the caption uses the `📖 Title — Author` format (also `📖 Title · Author`), take `source` = Title and `author` = Author from it.
    - Otherwise most captions give the author and book only as hashtags. Turn them back into proper names: `#joeabercrombie` → "Joe Abercrombie", `#thefirstlaw` → "The First Law", `#jamessacorey` → "James S. A. Corey", `#theexpanse` → "The Expanse", `#harukimurakami` → "Haruki Murakami", `#kafkaontheshore` → "Kafka on the Shore". Use the real, correctly spelled and capitalized name of the person or book.
@@ -56,7 +61,7 @@ It must be valid JSON matching this schema exactly — no extra keys, no comment
 
 - `"results"`: an array with **one result per input post, in input order** (same `ig_media_id`s, none added, none left out).
 - Each result: `"ig_media_id"` (string, copied from the input), `"no_quote"` (boolean; true only when `quotes` is empty because the post has no quote), `"quotes"` (array).
-- Each quote: `"image"` (image number, or omitted for a caption-only quote), `"lines"` (`[start, end]`, or omitted for a caption-only quote), `"from_caption"` (boolean), `"author"` (string or null), `"source"` (string or null), `"confidence"` (number 0–1). **There is no `text` key**: a file with quote text in it is rejected.
+- Each quote: `"image"` (image number, or omitted for a caption-only quote), `"lines"` (`[start, end]`, or omitted for a caption-only quote), `"from_caption"` (boolean), `"caption_lines"` (`[start, end]`, only for a caption-only quote), `"author"` (string or null), `"source"` (string or null), `"confidence"` (number 0–1). **There is no `text` key**: a file with quote text in it is rejected.
 
 Example (a single-image post, a carousel with two quotes, a caption-only quote and a non-quote post):
 
@@ -64,7 +69,7 @@ Example (a single-image post, a carousel with two quotes, a caption-only quote a
 {"results": [
   {"ig_media_id":"17890000000000001","no_quote":false,"quotes":[{"image":1,"lines":[0,4],"from_caption":false,"author":"Joe Abercrombie","source":"The First Law","confidence":0.9}]},
   {"ig_media_id":"17890000000000002","no_quote":false,"quotes":[{"image":1,"lines":[1,3],"from_caption":false,"author":"Robin Hobb","source":"Fool's Errand","confidence":0.95},{"image":2,"lines":[0,2],"from_caption":false,"author":"Robin Hobb","source":"Fool's Errand","confidence":0.85}]},
-  {"ig_media_id":"17890000000000003","no_quote":false,"quotes":[{"from_caption":true,"author":"Haruki Murakami","source":"Kafka on the Shore","confidence":0.8}]},
+  {"ig_media_id":"17890000000000003","no_quote":false,"quotes":[{"from_caption":true,"caption_lines":[0,0],"author":"Haruki Murakami","source":"Kafka on the Shore","confidence":0.8}]},
   {"ig_media_id":"17890000000000004","no_quote":true,"quotes":[]}
 ]}
 ```

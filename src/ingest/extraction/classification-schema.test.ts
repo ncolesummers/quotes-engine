@@ -6,13 +6,35 @@ const base = { author: "Joe Abercrombie", source: null, confidence: 0.9 };
 describe("ClassifiedQuoteSchema", () => {
   test("accepts an image line range and defaults from_caption to false", () => {
     const q = ClassifiedQuoteSchema.parse({ ...base, image: 1, lines: [0, 3] });
-    expect(q).toEqual({ ...base, image: 1, lines: [0, 3], from_caption: false });
+    expect(q).toEqual({
+      ...base,
+      image: 1,
+      lines: [0, 3],
+      from_caption: false,
+      caption_lines: null,
+    });
   });
 
   test("accepts a caption-only quote without line refs", () => {
     const q = ClassifiedQuoteSchema.parse({ ...base, from_caption: true });
     expect(q.image).toBeNull();
     expect(q.lines).toBeNull();
+  });
+
+  test("accepts a caption_lines range on a caption quote", () => {
+    const q = ClassifiedQuoteSchema.parse({ ...base, from_caption: true, caption_lines: [0, 1] });
+    expect(q.caption_lines).toEqual([0, 1]);
+    expect(ClassifiedQuoteSchema.parse({ ...base, from_caption: true }).caption_lines).toBeNull();
+  });
+
+  test("rejects caption_lines without from_caption, with image lines, or reversed", () => {
+    for (const bad of [
+      { ...base, caption_lines: [0, 0] },
+      { ...base, image: 1, lines: [0, 0], from_caption: true, caption_lines: [0, 0] },
+      { ...base, from_caption: true, caption_lines: [2, 1] },
+    ]) {
+      expect(ClassifiedQuoteSchema.safeParse(bad).success).toBe(false);
+    }
   });
 
   test("rejects a quote with neither line refs nor from_caption", () => {

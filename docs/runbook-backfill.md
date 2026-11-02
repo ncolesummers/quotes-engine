@@ -40,7 +40,9 @@ bun run extract:classify-batches --size 10  # smaller batches
 
 Writes `data/extractions/todo/batch-NNN.json`, holding the unextracted posts oldest first. Each post
 carries its caption and, per image, its numbered OCR lines (`img1:L0 "…"`, `img1:L1 "…"`, ...;
-carousel images are `img1`, `img2`, ...). No image paths: the agents work from the OCR text only.
+carousel images are `img1`, `img2`, ...), plus the caption split into numbered segments
+(`cap:L0 "…"`; hashtags and `📖` lines removed, each “curly-quoted” span its own segment so it can
+be told apart from the account's commentary). No image paths: the agents work from the text only.
 Posts not fully OCR'd are left out and listed as `missingOcr` (run step 2 again); posts whose image
 files are missing are listed as `missingMedia` (re-run step 1). Each run clears `todo/` and rewrites
 it from the DB. It refuses to run while classification results (`data/extractions/classified/`) or
@@ -62,7 +64,8 @@ Give the printed prompt, unchanged, to a Haiku subagent that has the **Read** an
 Run **at most 4–5 subagents at a time**, and start the next batch when one finishes.
 
 Each subagent writes `data/extractions/classified/batch-NNN.json`: per post, `no_quote` and a list
-of quotes as `{ image, lines: [start, end], from_caption, author, source, confidence }`. It replies
+of quotes as `{ image, lines: [start, end], from_caption, caption_lines, author, source, confidence }`
+(line references only, never quote text). It replies
 with one line, e.g. `batch-007: 20 posts, 18 quotes, 2 no_quote`. If a subagent fails or its file is
 missing, run that batch again.
 
@@ -78,7 +81,8 @@ bun run extract:assemble
 
 For each `data/extractions/classified/batch-NNN.json` it fills in the quote text from the
 referenced OCR lines (joining wrapped lines and merging words hyphenated across a wrap) or, for
-`from_caption` quotes without line refs, from the caption with its hashtags and `📖` lines removed.
+caption-only quotes, from the referenced `caption_lines` segments (or, without them, the whole
+caption with its hashtags and `📖` lines removed). Quote marks wrapping the whole quote are dropped.
 `found_in` becomes `image`, `caption` or `both`, and the confidence is the agent's confidence times
 the mean OCR confidence of the lines. It writes `data/extractions/batch-NNN.json` in the
 [#9 extraction schema](../src/ingest/extraction/schema.ts) and moves the classification file to

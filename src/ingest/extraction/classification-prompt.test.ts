@@ -35,6 +35,8 @@ describe("buildClassificationPrompt", () => {
     expect(prompt).toContain('img1:L0 "');
     expect(prompt).toMatch(/inclusive/i);
     expect(prompt).toContain('"from_caption"');
+    expect(prompt).toContain('cap:L0 "');
+    expect(prompt).toContain('"caption_lines"');
     for (const key of [
       "results",
       "ig_media_id",
@@ -88,7 +90,7 @@ describe("buildClassificationPrompt", () => {
     const results = parsed.data?.results ?? [];
     expect(results.some((r) => r.no_quote)).toBe(true);
     expect(results.some((r) => r.quotes.length > 1)).toBe(true);
-    expect(results.some((r) => r.quotes.some((q) => q.from_caption))).toBe(true);
+    expect(results.some((r) => r.quotes.some((q) => q.caption_lines !== null))).toBe(true);
     expect(match?.[1]).not.toContain('"text"');
   });
 });
