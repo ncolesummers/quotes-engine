@@ -1,5 +1,5 @@
 import type { Database, SQLQueryBindings } from "bun:sqlite";
-import { likeContains } from "./quotes";
+import { HIGHLIGHT_POSTED_SQL, likeContains } from "./sql";
 
 export interface HighlightBook {
   id: number;
@@ -52,10 +52,6 @@ export interface QuoteHighlight {
   createdAt: string | null;
   book: Pick<HighlightBook, "id" | "title" | "author">;
 }
-
-/** SQL expression: highlight `h` is linked to a quote with at least one post link. */
-export const HIGHLIGHT_POSTED_SQL =
-  "(h.quote_id IS NOT NULL AND EXISTS (SELECT 1 FROM post_quotes pq WHERE pq.quote_id = h.quote_id))";
 
 interface FlatHighlightRow extends Omit<HighlightRow, "posted" | "book"> {
   posted: number;
