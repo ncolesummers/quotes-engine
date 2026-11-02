@@ -118,7 +118,12 @@ describe("linkPostQuote", () => {
     const q = upsertQuote(db, { text: "A quote" }).quote;
     const p = upsertPost(db, { igMediaId: "ig1" });
     linkPostQuote(db, p.id, q.id, { method: "manual", confidence: 1, status: "confirmed" });
-    linkPostQuote(db, p.id, q.id, { method: "image", confidence: 0.6, status: "needs_review" });
+    const stored = linkPostQuote(db, p.id, q.id, {
+      method: "image",
+      confidence: 0.6,
+      status: "needs_review",
+    });
+    expect(stored).toBe("confirmed");
     expect(db.query("SELECT method, status FROM post_quotes").get()).toEqual({
       method: "manual",
       status: "confirmed",

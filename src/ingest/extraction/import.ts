@@ -7,7 +7,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { z } from "zod";
 import { getPostByIgMediaId, markExtracted } from "../../server/repos/posts";
 import { type LinkStatus, linkPostQuote, upsertQuote } from "../../server/repos/quotes";
@@ -78,8 +78,8 @@ export function importExtractions(
       results = parseExtractionFile(readFileSync(file, "utf8"));
     } catch (err) {
       const message = errorMessage(err);
-      moveInto(file, failedDir);
-      writeFileSync(join(failedDir, `${basename(file)}.error.txt`), `${message}\n`);
+      const dest = moveInto(file, failedDir);
+      writeFileSync(`${dest}.error.txt`, `${message}\n`);
       summary.filesFailed++;
       summary.errors.push({ file, message });
       continue;
@@ -141,22 +141,32 @@ function importResult(db: Database, result: ExtractionResult, extractedAt: strin
       q.confidence < REVIEW_CONFIDENCE_THRESHOLD || match === "likely"
         ? "needs_review"
         : "confirmed";
-    linkPostQuote(db, post.id, quote.id, {
+    // An existing link keeps its stored status, so count what was persisted.
+    const stored = linkPostQuote(db, post.id, quote.id, {
       method: q.found_in === "image" ? "image" : "caption",
       confidence: q.confidence,
       status,
     });
     if (match !== "existing") counts.quotesCreated++;
     counts.quotesLinked++;
-    if (status === "needs_review") counts.needsReview++;
+    if (stored === "needs_review") counts.needsReview++;
   }
   markExtracted(db, post.id, extractedAt);
   return counts;
 }
 
-function moveInto(file: string, dir: string): void {
+/**
+ * Move `file` into `dir` without overwriting an earlier archive of the same name: `a.json`
+ * becomes `a-1.json`, `a-2.json`, ... Returns the destination path.
+ */
+function moveInto(file: string, dir: string): string {
   mkdirSync(dir, { recursive: true });
-  renameSync(file, join(dir, basename(file)));
+  const ext = extname(file);
+  const stem = basename(file, ext);
+  let dest = join(dir, `${stem}${ext}`);
+  for (let n = 1; existsSync(dest); n++) dest = join(dir, `${stem}-${n}${ext}`);
+  renameSync(file, dest);
+  return dest;
 }
 
 function errorMessage(err: unknown): string {

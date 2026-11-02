@@ -162,8 +162,29 @@ describe("importExtractions", () => {
         },
       ],
     });
-    importExtractions(db, [file], opts);
+    const content = readFileSync(file, "utf8");
+    expect(importExtractions(db, [file], opts).needsReview).toBe(1);
     expect(links()).toMatchObject([{ status: "needs_review" }]);
+
+    // On re-import the text now matches exactly, but the stored link still needs review.
+    const again = importExtractions(db, [writeFile("a.json", content)], opts);
+    expect(again.needsReview).toBe(1);
+  });
+
+  test("an archive name collision keeps both files (and pairs the error sidecar)", () => {
+    upsertPost(db, { igMediaId: "ig1" });
+    const good = { results: [{ ig_media_id: "ig1", quotes: [quote(WILDE)] }] };
+    importExtractions(db, [writeFile("a.json", good)], opts);
+    importExtractions(db, [writeFile("a.json", { ...good, marker: 2 })], opts);
+    importExtractions(db, [writeFile("b.json", "bad")], opts);
+    importExtractions(db, [writeFile("b.json", "worse")], opts);
+
+    expect(JSON.parse(readFileSync(join(opts.importedDir, "a.json"), "utf8"))).toEqual(good);
+    expect(JSON.parse(readFileSync(join(opts.importedDir, "a-1.json"), "utf8")).marker).toBe(2);
+    expect(readFileSync(join(opts.failedDir, "b.json"), "utf8")).toBe("bad");
+    expect(readFileSync(join(opts.failedDir, "b-1.json"), "utf8")).toBe("worse");
+    expect(existsSync(join(opts.failedDir, "b.json.error.txt"))).toBe(true);
+    expect(existsSync(join(opts.failedDir, "b-1.json.error.txt"))).toBe(true);
   });
 
   test("an invalid JSON shape moves the file to failed/ with the error and writes nothing", () => {
