@@ -53,7 +53,8 @@ export function parseQuoteFilters(params: URLSearchParams): QuoteFilters {
     reposted,
     // "No book" only means something for books.
     noBook: params.get("nobook") === "1" && bookId === null && (kind ?? "book") === "book",
-    kind,
+    // A picked book is more specific than a song/other kind (which never has a book).
+    kind: bookId !== null && kind !== "book" ? null : kind,
   };
 }
 

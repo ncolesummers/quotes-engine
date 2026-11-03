@@ -7,6 +7,7 @@ import { backfillBooks, getBook } from "./books";
 import { requeuePosts } from "./posts";
 import {
   getQuote,
+  mergeQuotes,
   type SearchQuotesParams,
   searchQuotes,
   updateQuote,
@@ -223,5 +224,27 @@ describe("requeuePosts", () => {
       { id: a.id, e: null },
       { id: b.id, e: "2026-01-01T00:00:00.000Z" },
     ]);
+  });
+});
+
+describe("mergeQuotes kind", () => {
+  test("a bare kept quote takes a dropped song's kind with its artist and title", () => {
+    const keep = s.quote({ text: LYRIC });
+    const drop = s.quote({ text: `${LYRIC} again`, author: "Paper Lanterns", sourceTitle: "Song" });
+    updateQuote(db, drop.id, { sourceKind: "song" });
+    mergeQuotes(db, keep.id, drop.id);
+    expect(getQuote(db, keep.id)).toMatchObject({
+      sourceKind: "song",
+      author: "Paper Lanterns",
+      bookId: null,
+    });
+  });
+
+  test("an attributed kept quote keeps its own kind and book", () => {
+    const { quote: keep } = upsertQuote(db, { text: LYRIC, sourceTitle: "A Book" });
+    const drop = s.quote({ text: `${LYRIC} again` });
+    updateQuote(db, drop.id, { sourceKind: "song" });
+    mergeQuotes(db, keep.id, drop.id);
+    expect(getQuote(db, keep.id)).toMatchObject({ sourceKind: "book", bookId: keep.bookId });
   });
 });

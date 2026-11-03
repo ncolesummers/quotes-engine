@@ -405,6 +405,9 @@ export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote
          author = COALESCE(author, (SELECT author FROM quotes WHERE id = $dropId)),
          source_title = COALESCE(source_title, (SELECT source_title FROM quotes WHERE id = $dropId)),
          notes = COALESCE(notes, (SELECT notes FROM quotes WHERE id = $dropId)),
+         -- A bare kept quote (no attribution at all) takes the dropped one's kind with it.
+         source_kind = CASE WHEN author IS NULL AND source_title IS NULL AND book_id IS NULL
+           THEN (SELECT source_kind FROM quotes WHERE id = $dropId) ELSE source_kind END,
          book_id = CASE WHEN source_kind = 'book'
            THEN COALESCE(book_id, (SELECT book_id FROM quotes WHERE id = $dropId)) END,
          updated_at = ${NOW_SQL}

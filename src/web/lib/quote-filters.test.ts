@@ -53,6 +53,7 @@ describe("parseQuoteFilters", () => {
     expect(parse("reposted=1&posted=no")).toMatchObject({ reposted: true, posted: "any" });
     expect(parse("reposted=1&posted=yes")).toMatchObject({ reposted: true, posted: "yes" });
     expect(parse("kind=song&nobook=1")).toMatchObject({ kind: "song", noBook: false });
+    expect(parse("kind=song&book=3")).toMatchObject({ kind: null, bookId: 3 });
   });
 });
 
