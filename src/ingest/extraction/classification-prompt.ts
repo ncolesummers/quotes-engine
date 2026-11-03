@@ -66,7 +66,21 @@ export const CLASSIFICATION_EXAMPLE: z.input<typeof ClassificationFileSchema> = 
         },
       ],
     },
-    { ig_media_id: "17890000000000004", no_quote: true, quotes: [] },
+    {
+      ig_media_id: "17890000000000004",
+      no_quote: false,
+      quotes: [
+        {
+          from_caption: true,
+          caption_lines: [0, 1],
+          author: "The Paper Lanterns",
+          source: "Northbound Static",
+          kind: "song",
+          confidence: 0.85,
+        },
+      ],
+    },
+    { ig_media_id: "17890000000000005", no_quote: true, quotes: [] },
   ],
 };
 
@@ -94,7 +108,7 @@ function renderPrompt(batchPath: string, outPath: string, batch: string): string
 
 ## Never write out quote text
 
-**Never write quote text** — not in the result file, not in your reply, not paraphrased, not partly. Refer to a quote only by its line numbers: image lines (\`"image"\` + \`"lines"\`) or caption segments (\`"from_caption": true\` + \`"caption_lines"\`). The quote text is filled in later by code, from the OCR. Your output holds only line references, names, titles, flags and numbers. Do not open the images either: everything you need is in the batch file.
+**Never write quote text** — not in the result file, not in your reply, not paraphrased, not partly. The same goes for song lyrics: refer to them by line numbers only. Refer to a quote only by its line numbers: image lines (\`"image"\` + \`"lines"\`) or caption segments (\`"from_caption": true\` + \`"caption_lines"\`). The quote text is filled in later by code, from the OCR. Your output holds only line references, names, titles, flags and numbers. Do not open the images either: everything you need is in the batch file.
 
 ## Input
 
@@ -139,9 +153,9 @@ It must be valid JSON matching this schema exactly — no extra keys, no comment
 
 - \`"results"\`: an array with **one result per input post, in input order** (same \`ig_media_id\`s, none added, none left out).
 - Each result: \`"ig_media_id"\` (string, copied from the input), \`"no_quote"\` (boolean; true only when \`quotes\` is empty because the post has no quote), \`"quotes"\` (array).
-- Each quote: \`"image"\` (image number, or omitted for a caption-only quote), \`"lines"\` (\`[start, end]\`, or omitted for a caption-only quote), \`"from_caption"\` (boolean), \`"caption_lines"\` (\`[start, end]\`, only for a caption-only quote), \`"author"\` (string or null), \`"source"\` (string or null), \`"confidence"\` (number 0–1). **There is no \`text\` key**: a file with quote text in it is rejected.
+- Each quote: \`"image"\` (image number, or omitted for a caption-only quote), \`"lines"\` (\`[start, end]\`, or omitted for a caption-only quote), \`"from_caption"\` (boolean), \`"caption_lines"\` (\`[start, end]\`, only for a caption-only quote), \`"author"\` (string or null), \`"source"\` (string or null), \`"kind"\` (\`"book"\`, \`"song"\` or \`"other"\`; may be omitted for a book), \`"confidence"\` (number 0–1). **There is no \`text\` key**: a file with quote text in it is rejected.
 
-Example (a single-image post, a carousel with two quotes, a caption-only quote and a non-quote post):
+Example (a single-image post, a carousel with two quotes, a caption-only quote, a caption-only song lyric and a non-quote post):
 
 \`\`\`json
 ${compactExample()}

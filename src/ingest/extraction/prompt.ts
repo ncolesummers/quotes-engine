@@ -1,5 +1,6 @@
 import { basename, extname, join, resolve } from "node:path";
-import type { ExtractionFile } from "./schema";
+import type { z } from "zod";
+import type { ExtractionFileSchema } from "./schema";
 
 export interface ExtractionPromptOptions {
   /** Batch file to process, e.g. `data/extractions/todo/batch-007.json`. */
@@ -12,7 +13,7 @@ export interface ExtractionPromptOptions {
  * Example output embedded in the prompt. A test checks that it is valid against
  * `ExtractionFileSchema`, so the prompt can't drift from what `import:extractions` accepts.
  */
-export const EXAMPLE_OUTPUT: ExtractionFile = {
+export const EXAMPLE_OUTPUT: z.input<typeof ExtractionFileSchema> = {
   results: [
     {
       ig_media_id: "17890000000000001",
@@ -47,7 +48,21 @@ export const EXAMPLE_OUTPUT: ExtractionFile = {
       ],
       no_quote: false,
     },
-    { ig_media_id: "17890000000000003", quotes: [], no_quote: true },
+    {
+      ig_media_id: "17890000000000003",
+      quotes: [
+        {
+          text: "Song lyric from the caption, transcribed exactly.",
+          author: "The Paper Lanterns",
+          source: "Northbound Static",
+          kind: "song",
+          found_in: "caption",
+          confidence: 0.85,
+        },
+      ],
+      no_quote: false,
+    },
+    { ig_media_id: "17890000000000004", quotes: [], no_quote: true },
   ],
 };
 
@@ -74,10 +89,11 @@ export const ATTRIBUTION_RULES = `   - If the caption uses the \`📖 Title — 
    - Otherwise most captions give the author and book only as hashtags. Turn them back into proper names: \`#joeabercrombie\` → "Joe Abercrombie", \`#thefirstlaw\` → "The First Law", \`#jamessacorey\` → "James S. A. Corey", \`#theexpanse\` → "The Expanse", \`#harukimurakami\` → "Haruki Murakami", \`#kafkaontheshore\` → "Kafka on the Shore". Use the real, correctly spelled and capitalized name of the person or book.
    - An attribution printed in the image counts too.
    - Set \`source\` only when a book or series is clearly named (by a tag, the caption or the image). Otherwise use null. Use null for \`author\` when nothing names one.
-   - **Ignore process/tool tags**: \`#pythonimaginglibrary\`, \`#p5js\`, \`#gnuterrypratchett\` and generic tags (\`#quote\`, \`#books\`, \`#reading\`, \`#bookstagram\`, ...) are never an author or a source.`;
+   - **Ignore process/tool tags**: \`#pythonimaginglibrary\`, \`#p5js\`, \`#gnuterrypratchett\` and generic tags (\`#quote\`, \`#books\`, \`#reading\`, \`#bookstagram\`, ...) are never an author or a source.
+   - **\`kind\`**: what the quote comes from: \`"book"\` (the default), \`"song"\` or \`"other"\` (a film, show, speech, ...). Quotes can come from songs. For a song, put the **artist** (singer or band) in \`author\` and the **song title** in \`source\`, and set \`"kind": "song"\`. Signs of a song: the text is wrapped in or marked with music notes (\`🎵\`, \`🎶\`, \`♪\`, \`♫\`), or the tags name a band or musician (e.g. \`#greenday\`) rather than a writer or a book.`;
 
 /** The account's own commentary is not a quote (shared with the classification prompt). */
-export const COMMENTARY_RULE = `**The account's own commentary is not a quote.** Short captions like "Find your joy wherever you can." are usually the poster's comment; the quote is then in the image. Only record text that is quoted from a book, person or other work.`;
+export const COMMENTARY_RULE = `**The account's own commentary is not a quote.** Short captions like "Find your joy wherever you can." are usually the poster's comment; the quote is then in the image. Only record text that is quoted from a book, person, song or other work. **Lyrics are quotes, not commentary**: a caption that is a song lyric (often between \`🎵\` or \`♪\` marks, or with artist/band tags) is a quote with \`"kind": "song"\`, even with no attribution line.`;
 
 /** Posts without a quote (shared with the classification prompt). */
 export const NON_QUOTE_RULE = `**Non-quote posts** (e.g. "Wine ❤️", thanking someone for a mug, a photo with no quoted text) get \`"quotes": []\` and \`"no_quote": true\`.`;
@@ -121,9 +137,9 @@ It must be valid JSON matching this schema exactly — no extra keys, no comment
 
 - \`"results"\`: an array with **one result per input post, in input order** (same \`ig_media_id\`s, none added). The only posts left out are those with an image you cannot read (step 1).
 - Each result: \`"ig_media_id"\` (string, copied from the input), \`"quotes"\` (array), \`"no_quote"\` (boolean; true only when \`quotes\` is empty because the post has no quote).
-- Each quote: \`"text"\` (non-empty string), \`"author"\` (string or null), \`"source"\` (string or null), \`"found_in"\` (\`"caption"\`, \`"image"\` or \`"both"\`), \`"confidence"\` (number 0–1).
+- Each quote: \`"text"\` (non-empty string), \`"author"\` (string or null), \`"source"\` (string or null), \`"kind"\` (\`"book"\`, \`"song"\` or \`"other"\`; may be omitted for a book), \`"found_in"\` (\`"caption"\`, \`"image"\` or \`"both"\`), \`"confidence"\` (number 0–1).
 
-Example (a single-image post, a carousel with two quotes, and a non-quote post):
+Example (a single-image post, a carousel with two quotes, a song lyric in the caption, and a non-quote post):
 
 \`\`\`json
 ${compactExample()}

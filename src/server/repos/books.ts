@@ -481,7 +481,7 @@ export function backfillBooks(db: Database): BackfillSummary {
           `SELECT q.id, (SELECT h.book_id FROM highlights h WHERE h.quote_id = q.id
            ORDER BY h.created_at, h.id LIMIT 1) AS bookId
          FROM quotes q
-         WHERE q.book_id IS NULL AND EXISTS (SELECT 1 FROM highlights h WHERE h.quote_id = q.id)
+         WHERE q.book_id IS NULL AND q.source_kind = 'book' AND EXISTS (SELECT 1 FROM highlights h WHERE h.quote_id = q.id)
          ORDER BY q.id`,
         )
         .all();
@@ -493,7 +493,7 @@ export function backfillBooks(db: Database): BackfillSummary {
       const bySource = db
         .query<{ id: number; sourceTitle: string; author: string | null }, []>(
           `SELECT id, source_title AS sourceTitle, author FROM quotes
-         WHERE book_id IS NULL AND trim(COALESCE(source_title, '')) != '' ORDER BY id`,
+         WHERE book_id IS NULL AND source_kind = 'book' AND trim(COALESCE(source_title, '')) != '' ORDER BY id`,
         )
         .all();
       for (const q of bySource) {

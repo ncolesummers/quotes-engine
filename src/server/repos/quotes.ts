@@ -12,6 +12,12 @@ import {
 } from "./books";
 import { likeContains } from "./sql";
 
+/**
+ * What a quote comes from (#42). For a song, `author` is the artist and `sourceTitle` the song.
+ * Only "book" quotes link to a book.
+ */
+export type SourceKind = "book" | "song" | "other";
+
 export interface Quote {
   id: number;
   text: string;
@@ -19,7 +25,9 @@ export interface Quote {
   author: string | null;
   sourceTitle: string | null;
   notes: string | null;
-  /** The book `sourceTitle` resolved to (see `findOrCreateBook`), or null. */
+  sourceKind: SourceKind;
+  /** The book `sourceTitle` resolved to (see `findOrCreateBook`), or null. Always null unless
+   * `sourceKind` is "book". */
   bookId: number | null;
   createdAt: string;
   updatedAt: string;
@@ -29,6 +37,8 @@ export interface QuoteInput {
   text: string;
   author?: string | null;
   sourceTitle?: string | null;
+  /** Default "book". Only a book quote is linked to (or creates) a book. */
+  sourceKind?: SourceKind;
   /** `source` for a book created from `sourceTitle`. Default "manual". */
   bookSource?: BookSource;
 }
@@ -66,8 +76,10 @@ export interface SearchQuotesParams {
   bookId?: number;
   posted?: "yes" | "no";
   minPostings?: number;
-  /** Only quotes not linked to any book (#34). */
+  /** Book-kind quotes not linked to any book (#34); songs and other sources don't count. */
   noBook?: boolean;
+  /** Only quotes of this kind (#42). */
+  kind?: SourceKind;
   sort: QuoteSort;
   limit: number;
   offset: number;
@@ -111,7 +123,7 @@ const NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
 const QUOTE_COLUMNS = `
   q.id, q.text, q.normalized_text AS normalizedText, q.author, q.source_title AS sourceTitle,
-  q.notes, q.book_id AS bookId, q.created_at AS createdAt, q.updated_at AS updatedAt`;
+  q.notes, q.source_kind AS sourceKind, q.book_id AS bookId, q.created_at AS createdAt, q.updated_at AS updatedAt`;
 
 export function getQuote(db: Database, id: number): Quote | null {
   return db
@@ -143,11 +155,14 @@ function resolveBookId(
 function fillMissing(db: Database, quote: Quote, input: QuoteInput): Quote {
   const author = quote.author ?? input.author ?? null;
   const sourceTitle = quote.sourceTitle ?? input.sourceTitle ?? null;
+  // Songs and other non-book sources never get a book, whichever side says so.
+  const isBook = quote.sourceKind === "book" && (input.sourceKind ?? "book") === "book";
   // A linked Apple Books highlight names the book more reliably than a caption's wording.
-  const bookId =
-    quote.bookId ??
-    highlightBookId(db, quote.id) ??
-    resolveBookId(db, sourceTitle, author, input.bookSource);
+  const bookId = !isBook
+    ? quote.bookId
+    : (quote.bookId ??
+      highlightBookId(db, quote.id) ??
+      resolveBookId(db, sourceTitle, author, input.bookSource));
   if (author === quote.author && sourceTitle === quote.sourceTitle && bookId === quote.bookId) {
     return quote;
   }
@@ -184,6 +199,7 @@ function bestCandidate(db: Database, normalized: string): { id: number; score: n
 export function upsertQuote(db: Database, input: QuoteInput): UpsertQuoteResult {
   const normalized = normalizeQuote(input.text);
   if (!normalized) throw new Error("Quote text is empty after normalization");
+  const sourceKind = input.sourceKind ?? "book";
 
   return db
     .transaction((): UpsertQuoteResult => {
@@ -201,15 +217,19 @@ export function upsertQuote(db: Database, input: QuoteInput): UpsertQuoteResult 
 
       const inserted = db
         .query<{ id: number }, Record<string, string | number | null>>(
-          `INSERT INTO quotes (text, normalized_text, author, source_title, book_id)
-         VALUES ($text, $normalized, $author, $sourceTitle, $bookId) RETURNING id`,
+          `INSERT INTO quotes (text, normalized_text, author, source_title, source_kind, book_id)
+         VALUES ($text, $normalized, $author, $sourceTitle, $sourceKind, $bookId) RETURNING id`,
         )
         .get({
           text: input.text.trim(),
           normalized,
           author: input.author ?? null,
           sourceTitle: input.sourceTitle ?? null,
-          bookId: resolveBookId(db, input.sourceTitle, input.author, input.bookSource),
+          sourceKind,
+          bookId:
+            sourceKind === "book"
+              ? resolveBookId(db, input.sourceTitle, input.author, input.bookSource)
+              : null,
         });
       if (!inserted) throw new Error("Quote insert returned no row");
       const quote = requireQuote(db, inserted.id);
@@ -290,7 +310,11 @@ export function searchQuotes(db: Database, params: SearchQuotesParams): QuoteSea
     where.push("q.book_id = $bookId");
     binds.bookId = params.bookId;
   }
-  if (params.noBook) where.push("q.book_id IS NULL");
+  if (params.noBook) where.push("q.book_id IS NULL AND q.source_kind = 'book'");
+  if (params.kind) {
+    where.push("q.source_kind = $kind");
+    binds.kind = params.kind;
+  }
   if (params.posted === "yes") having.push("postingCount > 0");
   if (params.posted === "no") having.push("postingCount = 0");
   if (params.minPostings !== undefined) {
@@ -381,7 +405,8 @@ export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote
          author = COALESCE(author, (SELECT author FROM quotes WHERE id = $dropId)),
          source_title = COALESCE(source_title, (SELECT source_title FROM quotes WHERE id = $dropId)),
          notes = COALESCE(notes, (SELECT notes FROM quotes WHERE id = $dropId)),
-         book_id = COALESCE(book_id, (SELECT book_id FROM quotes WHERE id = $dropId)),
+         book_id = CASE WHEN source_kind = 'book'
+           THEN COALESCE(book_id, (SELECT book_id FROM quotes WHERE id = $dropId)) END,
          updated_at = ${NOW_SQL}
        WHERE id = $keepId`,
       ).run(ids);
@@ -396,6 +421,8 @@ export interface QuotePatch {
   author?: string | null;
   sourceTitle?: string | null;
   notes?: string | null;
+  /** "song" or "other" unlinks the book (deleting it if nothing else uses it). */
+  sourceKind?: SourceKind;
 }
 
 export type UpdateQuoteResult =
@@ -409,6 +436,7 @@ const PATCH_COLUMNS = [
   ["author", "author"],
   ["sourceTitle", "source_title"],
   ["notes", "notes"],
+  ["sourceKind", "source_kind"],
 ] as const;
 
 /**
@@ -423,12 +451,18 @@ function relinkedBookId(
   current: Quote,
   patch: QuotePatch,
 ): number | null | undefined {
+  // Songs and other non-book sources never link to a book, whatever else the patch says.
+  const kind = patch.sourceKind ?? current.sourceKind;
+  if (kind !== "book") return current.bookId === null ? undefined : null;
   // A linked Apple Books highlight pins the quote to that book whatever the caption says.
   const fromHighlight = highlightBookId(db, current.id);
   if (fromHighlight !== null) return fromHighlight === current.bookId ? undefined : fromHighlight;
   const sourceTitle = patch.sourceTitle === undefined ? current.sourceTitle : patch.sourceTitle;
   const author = patch.author === undefined ? current.author : patch.author;
-  if (patch.sourceTitle !== undefined) return resolveBookId(db, sourceTitle, author);
+  // A new source title, or a switch back to "book", (re)links the book the title names.
+  if (patch.sourceTitle !== undefined || current.sourceKind !== "book") {
+    return resolveBookId(db, sourceTitle, author);
+  }
   if (patch.author === undefined || !sourceTitle) return undefined;
   const book = current.bookId === null ? null : getBook(db, current.bookId);
   if (book?.author) return undefined;

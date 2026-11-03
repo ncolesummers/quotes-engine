@@ -136,7 +136,9 @@ function importResult(db: Database, result: ExtractionResult, extractedAt: strin
       text: q.text,
       author: q.author,
       sourceTitle: q.source,
-      // Links the quote to its book (found or created) whenever `source` is present.
+      sourceKind: q.kind,
+      // Links a book quote to its book (found or created) whenever `source` is present; songs
+      // and other sources never get one.
       bookSource: "caption",
     });
     const status: LinkStatus =

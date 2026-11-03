@@ -406,6 +406,38 @@ describe("ReviewPage — extractions", () => {
     fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
     expect(await screen.findByRole("link", { name: /1 awaiting review/i })).toBeDefined();
   });
+
+  test("Mark as song calls the API and moves on (#42)", async () => {
+    fakeServer({ links: twoLinks() });
+    renderReview();
+    await screen.findByRole("article", { name: /post 10/i });
+    fireEvent.click(screen.getByRole("button", { name: /mark as song/i }));
+
+    expect(await screen.findByRole("article", { name: /post 11/i })).toBeDefined();
+    expect(requestsTo("POST", "/api/review/10/1")).toEqual([{ action: "song" }]);
+  });
+
+  test("keyboard: s marks the link a song", async () => {
+    fakeServer({ links: twoLinks() });
+    renderReview();
+    await screen.findByRole("article", { name: /post 10/i });
+    press("s");
+    expect(await screen.findByRole("article", { name: /post 11/i })).toBeDefined();
+    expect(requestsTo("POST", "/api/review/10/1")).toEqual([{ action: "song" }]);
+  });
+
+  test("the kind selector relabels the fields and saves the kind", async () => {
+    fakeServer({ links: twoLinks() });
+    renderReview();
+    const card = await screen.findByRole("article", { name: /post 10/i });
+    expect(within(card).getByRole("button", { name: "Add book" })).toBeDefined();
+    fireEvent.click(within(card).getByRole("radio", { name: "Song" }));
+    await waitFor(() =>
+      expect(requestsTo("PATCH", "/api/quotes/1")).toEqual([{ sourceKind: "song" }]),
+    );
+    expect(await within(card).findByRole("button", { name: "Add song" })).toBeDefined();
+    expect(within(card).getByRole("button", { name: "Edit artist" })).toBeDefined();
+  });
 });
 
 describe("ReviewPage — duplicates", () => {

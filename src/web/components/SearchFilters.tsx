@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { CheckIcon, ChevronsUpDownIcon, SlidersHorizontalIcon, XIcon } from "lucide-react";
 import { useState } from "react";
-import { fetchAuthors, fetchBooks } from "@/api";
+import { fetchAuthors, fetchBooks, type SourceKind } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -16,6 +16,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { formatNumber } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
 import type { PostedFilter, QuoteFilters } from "@/lib/quote-filters";
+import { KIND_FILTER_LABEL, SOURCE_KINDS } from "@/lib/source-kind";
 import { cn } from "@/lib/utils";
 
 export type SetFilters = (change: Partial<QuoteFilters>) => void;
@@ -226,7 +227,7 @@ const POSTED: { value: PostedFilter; label: string }[] = [
 
 const toggleOn = "data-[state=on]:bg-primary data-[state=on]:text-primary-foreground";
 
-/** Author, book, posted, reposted and no-book controls. */
+/** Author, book, posted, reposted, no-book and kind controls. */
 export function FilterControls({
   filters,
   onChange,
@@ -274,6 +275,23 @@ export function FilterControls({
       >
         No book
       </Button>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        value={filters.kind ?? "any"}
+        onValueChange={(v) => v && onChange({ kind: v === "any" ? null : (v as SourceKind) })}
+        aria-label="Kind"
+      >
+        <ToggleGroupItem value="any" className={cn("px-2.5", toggleOn)}>
+          Any kind
+        </ToggleGroupItem>
+        {SOURCE_KINDS.map((kind) => (
+          <ToggleGroupItem key={kind} value={kind} className={cn("px-2.5", toggleOn)}>
+            {KIND_FILTER_LABEL[kind]}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
     </div>
   );
 }

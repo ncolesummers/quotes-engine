@@ -152,7 +152,12 @@ For the few posts that arrive each day, steps 2–6 run unattended, without a Cl
 ```sh
 bun run extract:new            # 20 posts per batch
 bun run extract:new --size 10
+bun run extract:new --redo 17890000000000001 --redo 17890000000000002
 ```
+
+`--redo <ig_media_id>` (repeatable) queues a post again even if it was already extracted or marked
+`no_quote` (e.g. a song lyric the classifier took for commentary), then runs as usual. Existing quote
+links on the post are kept.
 
 It does nothing (no OCR, no agent) when every post is already extracted. Otherwise it OCRs the
 unextracted posts, writes the classification batches, and runs one headless Haiku agent per batch,

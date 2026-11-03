@@ -50,7 +50,7 @@ function postFor(ocr: PostOcr): ClassificationBatchPost {
   };
 }
 
-const Q = { author: "Joe Abercrombie", source: "The Blade Itself" };
+const Q = { author: "Joe Abercrombie", source: "The Blade Itself", kind: "book" as const };
 
 describe("joinOcrLines", () => {
   test("joins wrapped lines with single spaces and trims whitespace", () => {

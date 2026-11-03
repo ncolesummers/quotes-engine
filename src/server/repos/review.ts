@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { classifyMatch, jaccard, LIKELY_THRESHOLD, trigrams } from "../text/similarity";
-import type { LinkMethod } from "./quotes";
+import { type LinkMethod, type SourceKind, updateQuote } from "./quotes";
 
 export interface ReviewLink {
   postId: number;
@@ -15,7 +15,13 @@ export interface ReviewLink {
     postedAt: string | null;
     mediaPath: string | null;
   };
-  quote: { id: number; text: string; author: string | null; sourceTitle: string | null };
+  quote: {
+    id: number;
+    text: string;
+    author: string | null;
+    sourceTitle: string | null;
+    sourceKind: SourceKind;
+  };
 }
 
 export interface DuplicateQuote {
@@ -33,7 +39,8 @@ export interface DuplicatePair {
   score: number;
 }
 
-export type ReviewAction = "confirm" | "reject";
+/** `song` marks the quote a song (unlinking its book) and confirms the link (#42). */
+export type ReviewAction = "confirm" | "reject" | "song";
 
 /** `needs_review` post-quote links, newest post first. */
 export function listReviewLinks(db: Database): ReviewLink[] {
@@ -46,12 +53,14 @@ export function listReviewLinks(db: Database): ReviewLink[] {
     text: string;
     author: string | null;
     sourceTitle: string | null;
+    sourceKind: SourceKind;
   };
   return db
     .query<Flat, []>(
       `SELECT pq.post_id AS postId, pq.quote_id AS quoteId, pq.method, pq.confidence,
          p.ig_media_id AS igMediaId, p.permalink, p.caption, p.posted_at AS postedAt,
-         p.media_path AS mediaPath, q.text, q.author, q.source_title AS sourceTitle
+         p.media_path AS mediaPath, q.text, q.author, q.source_title AS sourceTitle,
+         q.source_kind AS sourceKind
        FROM post_quotes pq
        JOIN posts p ON p.id = pq.post_id
        JOIN quotes q ON q.id = pq.quote_id
@@ -72,7 +81,13 @@ export function listReviewLinks(db: Database): ReviewLink[] {
         postedAt: r.postedAt,
         mediaPath: r.mediaPath,
       },
-      quote: { id: r.quoteId, text: r.text, author: r.author, sourceTitle: r.sourceTitle },
+      quote: {
+        id: r.quoteId,
+        text: r.text,
+        author: r.author,
+        sourceTitle: r.sourceTitle,
+        sourceKind: r.sourceKind,
+      },
     }));
 }
 
@@ -121,8 +136,9 @@ export function findDuplicatePairs(db: Database): DuplicatePair[] {
 }
 
 /**
- * Resolve a post-quote link: `confirm` marks it confirmed, `reject` deletes it.
- * Returns false when the link doesn't exist.
+ * Resolve a post-quote link: `confirm` marks it confirmed, `reject` deletes it, `song` marks the
+ * quote a song (see `updateQuote`) and confirms the link. Returns false when the link doesn't
+ * exist, changing nothing.
  */
 export function resolveLink(
   db: Database,
@@ -131,11 +147,24 @@ export function resolveLink(
   action: ReviewAction,
 ): boolean {
   const ids = { postId, quoteId };
-  const sql =
-    action === "confirm"
-      ? "UPDATE post_quotes SET status = 'confirmed' WHERE post_id = $postId AND quote_id = $quoteId"
-      : "DELETE FROM post_quotes WHERE post_id = $postId AND quote_id = $quoteId";
-  return db.query(sql).run(ids).changes > 0;
+  if (action === "reject") {
+    return (
+      db.query("DELETE FROM post_quotes WHERE post_id = $postId AND quote_id = $quoteId").run(ids)
+        .changes > 0
+    );
+  }
+  return db
+    .transaction(() => {
+      const confirmed = db
+        .query(
+          "UPDATE post_quotes SET status = 'confirmed' WHERE post_id = $postId AND quote_id = $quoteId",
+        )
+        .run(ids);
+      if (confirmed.changes === 0) return false;
+      if (action === "song") updateQuote(db, quoteId, { sourceKind: "song" });
+      return true;
+    })
+    .immediate();
 }
 
 /**

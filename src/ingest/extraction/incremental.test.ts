@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createTestDb } from "../../../test/helpers/db";
-import { getPostByIgMediaId, upsertPost } from "../../server/repos/posts";
+import { getPostByIgMediaId, markExtracted, upsertPost } from "../../server/repos/posts";
 import type { OcrImage } from "../ocr/parse";
 import { type OcrRunner, runOcr } from "../ocr/run";
 import type { ClassificationFileSchema } from "./classification-schema";
@@ -499,5 +499,44 @@ describe("extractNewPosts", () => {
     // The broken file was moved to classified/failed, so batches could still be written.
     expect(requests).toHaveLength(1);
     expect(extractedAt("p1")).toBe(NOW.toISOString());
+  });
+});
+
+describe("extractNewPosts redo (#42)", () => {
+  test("re-runs extraction for a post already marked no_quote", async () => {
+    addPost("p1");
+    markExtracted(db, getPostByIgMediaId(db, "p1")?.id ?? 0, "2026-01-01T00:00:00.000Z");
+    const requests: ClassifyRequest[] = [];
+
+    const skipped = await extractNewPosts({
+      db,
+      paths,
+      runOcr: fakeOcr(),
+      runClassifier: fakeClassifier(requests),
+      now,
+    });
+    expect(skipped.unextracted).toBe(0);
+    expect(requests).toHaveLength(0);
+
+    const summary = await extractNewPosts({
+      db,
+      paths,
+      runOcr: fakeOcr(),
+      runClassifier: fakeClassifier(requests),
+      now,
+      redo: ["p1", "missing"],
+    });
+    expect(summary).toMatchObject({
+      requeued: 1,
+      unextracted: 1,
+      classified: 1,
+      postsExtracted: 1,
+    });
+    expect(summary.errors).toEqual([
+      { stage: "redo", subject: "missing", message: "no post with this ig_media_id" },
+    ]);
+    expect(requests).toHaveLength(1);
+    expect(extractedAt("p1")).toBe(NOW.toISOString());
+    expect(quoteTexts()).toHaveLength(1);
   });
 });

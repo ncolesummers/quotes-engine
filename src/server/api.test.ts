@@ -264,6 +264,7 @@ describe("PATCH /api/quotes/:id", () => {
     ["empty text", { text: "   " }],
     ["text that normalizes to nothing", { text: "!!! #tag" }],
     ["wrong type", { author: 5 }],
+    ["unknown kind", { sourceKind: "poem" }],
   ])("400 on %s", async (_name, body) => {
     const q = s.quote({ text: "x y z" });
     expectError(await send("PATCH", `/api/quotes/${q.id}`, body), 400);
@@ -276,6 +277,20 @@ describe("PATCH /api/quotes/:id", () => {
 
   test("404 on unknown id", async () => {
     expectError(await send("PATCH", "/api/quotes/999", { notes: "x" }), 404);
+  });
+
+  test("sets sourceKind; GET /api/quotes?kind= filters by it (#42)", async () => {
+    const song = s.quote({ text: "Synthetic lyric about rivers" });
+    s.quote({ text: "A plain book quote" });
+    const r = await send("PATCH", `/api/quotes/${song.id}`, { sourceKind: "song" });
+    expect(r.status).toBe(200);
+    expect(r.body.quote).toMatchObject({ sourceKind: "song", bookId: null });
+
+    const songs = await get("/api/quotes?kind=song");
+    expect(songs.body.items.map((q: { id: number }) => q.id)).toEqual([song.id]);
+    expect(songs.body.items[0].sourceKind).toBe("song");
+    expect((await get("/api/quotes?noBook=1")).body.total).toBe(1);
+    expectError(await get("/api/quotes?kind=poem"), 400);
   });
 });
 
@@ -493,7 +508,7 @@ describe("review", () => {
           postedAt: pending.postedAt,
           mediaUrl: "/media/a.jpg",
         },
-        quote: { id: q3.id, text: q3.text, author: null, sourceTitle: null },
+        quote: { id: q3.id, text: q3.text, author: null, sourceTitle: null, sourceKind: "book" },
       },
     ]);
     expect(r.body.duplicates).toHaveLength(1);
@@ -524,6 +539,23 @@ describe("review", () => {
     expect(r.body).toEqual({ postId: p.id, quoteId: q.id, action: "reject" });
     const detail = await get(`/api/quotes/${q.id}`);
     expect(detail.body.postings).toEqual([]);
+  });
+
+  test("song marks the quote a song, unlinks its book and confirms the link (#42)", async () => {
+    const q = s.quote({ text: "Synthetic lyric about lanterns", sourceTitle: "Fake Song" });
+    await send("PATCH", `/api/quotes/${q.id}`, { author: "Fake Band" });
+    const linked = (await get(`/api/quotes/${q.id}`)).body;
+    expect(linked.book).not.toBeNull();
+    const p = s.posting(q.id, {}, { status: "needs_review" });
+
+    const r = await send("POST", `/api/review/${p.id}/${q.id}`, { action: "song" });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ postId: p.id, quoteId: q.id, action: "song" });
+    const detail = await get(`/api/quotes/${q.id}`);
+    expect(detail.body.quote).toMatchObject({ sourceKind: "song", bookId: null });
+    expect(detail.body.book).toBeNull();
+    expect(detail.body.postings[0].status).toBe("confirmed");
+    expect((await get(`/api/books/${linked.book.id}`)).status).toBe(404);
   });
 
   test("dismissed duplicate pairs don't come back", async () => {

@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+/**
+ * What the quote comes from (#42): a book, a song (`author` = artist, `source` = song title) or
+ * something else. Only books are matched to (or create) a `books` row on import.
+ */
+export const SourceKindSchema = z.enum(["book", "song", "other"]).default("book");
+
 /** One quote found in a post by the extractor. */
 export const ExtractedQuoteSchema = z.object({
   text: z.string().trim().min(1),
@@ -11,6 +17,7 @@ export const ExtractedQuoteSchema = z.object({
     .string()
     .nullish()
     .transform((v) => v ?? null),
+  kind: SourceKindSchema,
   found_in: z.enum(["caption", "image", "both"]),
   confidence: z.number().min(0).max(1),
 });

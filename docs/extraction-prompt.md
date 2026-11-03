@@ -29,7 +29,8 @@ It looks like `{"posts": [{"ig_media_id", "posted_at", "caption", "media_paths":
    - An attribution printed in the image counts too.
    - Set `source` only when a book or series is clearly named (by a tag, the caption or the image). Otherwise use null. Use null for `author` when nothing names one.
    - **Ignore process/tool tags**: `#pythonimaginglibrary`, `#p5js`, `#gnuterrypratchett` and generic tags (`#quote`, `#books`, `#reading`, `#bookstagram`, ...) are never an author or a source.
-5. **The account's own commentary is not a quote.** Short captions like "Find your joy wherever you can." are usually the poster's comment; the quote is then in the image. Only record text that is quoted from a book, person or other work.
+   - **`kind`**: what the quote comes from: `"book"` (the default), `"song"` or `"other"` (a film, show, speech, ...). Quotes can come from songs. For a song, put the **artist** (singer or band) in `author` and the **song title** in `source`, and set `"kind": "song"`. Signs of a song: the text is wrapped in or marked with music notes (`🎵`, `🎶`, `♪`, `♫`), or the tags name a band or musician (e.g. `#greenday`) rather than a writer or a book.
+5. **The account's own commentary is not a quote.** Short captions like "Find your joy wherever you can." are usually the poster's comment; the quote is then in the image. Only record text that is quoted from a book, person, song or other work. **Lyrics are quotes, not commentary**: a caption that is a song lyric (often between `🎵` or `♪` marks, or with artist/band tags) is a quote with `"kind": "song"`, even with no attribution line.
 6. **Non-quote posts** (e.g. "Wine ❤️", thanking someone for a mug, a photo with no quoted text) get `"quotes": []` and `"no_quote": true`.
 7. **Carousels may contain several quotes**: add one entry to `quotes` per distinct quote. If the same quote appears in the image and the caption, record it once with `found_in: "both"`.
 8. **`confidence`** is a number from 0 to 1 for the whole entry (text and attribution). Use about 0.9–1 when the text is clearly legible and the attribution is explicit. Lower it (≤ 0.7) when the text is hard to read, cut off or stylized, or when the author/source is a guess (e.g. inferred from an ambiguous hashtag). Entries below 0.8 go to a human review queue, so be honest.
@@ -44,15 +45,16 @@ It must be valid JSON matching this schema exactly — no extra keys, no comment
 
 - `"results"`: an array with **one result per input post, in input order** (same `ig_media_id`s, none added). The only posts left out are those with an image you cannot read (step 1).
 - Each result: `"ig_media_id"` (string, copied from the input), `"quotes"` (array), `"no_quote"` (boolean; true only when `quotes` is empty because the post has no quote).
-- Each quote: `"text"` (non-empty string), `"author"` (string or null), `"source"` (string or null), `"found_in"` (`"caption"`, `"image"` or `"both"`), `"confidence"` (number 0–1).
+- Each quote: `"text"` (non-empty string), `"author"` (string or null), `"source"` (string or null), `"kind"` (`"book"`, `"song"` or `"other"`; may be omitted for a book), `"found_in"` (`"caption"`, `"image"` or `"both"`), `"confidence"` (number 0–1).
 
-Example (a single-image post, a carousel with two quotes, and a non-quote post):
+Example (a single-image post, a carousel with two quotes, a song lyric in the caption, and a non-quote post):
 
 ```json
 {"results": [
   {"ig_media_id":"17890000000000001","quotes":[{"text":"Quote text from the image, transcribed exactly.","author":"Joe Abercrombie","source":"The First Law","found_in":"image","confidence":0.9}],"no_quote":false},
   {"ig_media_id":"17890000000000002","quotes":[{"text":"First quote, from the first carousel image.","author":"Robin Hobb","source":"Fool's Errand","found_in":"image","confidence":0.95},{"text":"Second quote, from the second carousel image.","author":"Robin Hobb","source":"Fool's Errand","found_in":"both","confidence":0.85}],"no_quote":false},
-  {"ig_media_id":"17890000000000003","quotes":[],"no_quote":true}
+  {"ig_media_id":"17890000000000003","quotes":[{"text":"Song lyric from the caption, transcribed exactly.","author":"The Paper Lanterns","source":"Northbound Static","kind":"song","found_in":"caption","confidence":0.85}],"no_quote":false},
+  {"ig_media_id":"17890000000000004","quotes":[],"no_quote":true}
 ]}
 ```
 

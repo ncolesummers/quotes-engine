@@ -17,18 +17,21 @@ describe("parseQuoteFilters", () => {
       posted: "any",
       reposted: false,
       noBook: false,
+      kind: null,
     });
   });
 
   test("reads every param", () => {
-    expect(parse("sort=likes&author=Ken+Liu&book=3&posted=yes&reposted=1")).toEqual({
+    expect(parse("sort=likes&author=Ken+Liu&book=3&posted=yes&reposted=1&kind=book")).toEqual({
       sort: "likes",
       author: "Ken Liu",
       bookId: 3,
       posted: "yes",
       reposted: true,
       noBook: false,
+      kind: "book",
     });
+    expect(parse("kind=song")).toMatchObject({ kind: "song" });
     expect(parse("posted=no&nobook=1")).toMatchObject({ posted: "no", noBook: true });
   });
 
@@ -40,6 +43,7 @@ describe("parseQuoteFilters", () => {
     ["book=1.5", { bookId: null }],
     ["reposted=true", { reposted: false }],
     ["author=%20%20", { author: null }],
+    ["kind=poem", { kind: null }],
   ])("ignores bad value %s", (qs, expected) => {
     expect(parse(qs)).toMatchObject(expected);
   });
@@ -48,6 +52,7 @@ describe("parseQuoteFilters", () => {
     expect(parse("book=3&nobook=1")).toMatchObject({ bookId: 3, noBook: false });
     expect(parse("reposted=1&posted=no")).toMatchObject({ reposted: true, posted: "any" });
     expect(parse("reposted=1&posted=yes")).toMatchObject({ reposted: true, posted: "yes" });
+    expect(parse("kind=song&nobook=1")).toMatchObject({ kind: "song", noBook: false });
   });
 });
 
@@ -61,6 +66,7 @@ describe("toQuoteSearchParams", () => {
         posted: "yes",
         reposted: true,
         noBook: false,
+        kind: "song",
       }),
     ).toEqual({
       sort: "comments",
@@ -69,6 +75,7 @@ describe("toQuoteSearchParams", () => {
       posted: "yes",
       minPostings: 2,
       noBook: false,
+      kind: "song",
     });
   });
 
@@ -79,8 +86,8 @@ describe("toQuoteSearchParams", () => {
 
 describe("filterPatch", () => {
   test("a book and “No book” exclude each other", () => {
-    expect(filterPatch({ bookId: 3 })).toEqual({ book: "3", nobook: null });
-    expect(filterPatch({ noBook: true })).toEqual({ nobook: "1", book: null });
+    expect(filterPatch({ bookId: 3 })).toEqual({ book: "3", nobook: null, kind: null });
+    expect(filterPatch({ noBook: true })).toEqual({ nobook: "1", book: null, kind: null });
     expect(filterPatch({ bookId: null })).toEqual({ book: null });
     expect(filterPatch({ noBook: false })).toEqual({ nobook: null });
   });
@@ -97,6 +104,12 @@ describe("filterPatch", () => {
     expect(filterPatch({ sort: "likes" })).toEqual({ sort: "likes" });
   });
 
+  test("a song or other kind turns off the book filters", () => {
+    expect(filterPatch({ kind: "song" })).toEqual({ kind: "song", nobook: null, book: null });
+    expect(filterPatch({ kind: "book" })).toEqual({ kind: "book" });
+    expect(filterPatch({ kind: null })).toEqual({ kind: null });
+  });
+
   test("author", () => {
     expect(filterPatch({ author: "Ken Liu" })).toEqual({ author: "Ken Liu" });
     expect(filterPatch({ author: null })).toEqual({ author: null });
@@ -107,6 +120,7 @@ test("CLEAR_FILTERS removes every filter param but not q or sort", () => {
   expect(Object.keys(CLEAR_FILTERS).sort()).toEqual([
     "author",
     "book",
+    "kind",
     "nobook",
     "posted",
     "reposted",
