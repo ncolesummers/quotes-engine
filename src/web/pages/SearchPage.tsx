@@ -32,6 +32,7 @@ import {
   SORTS,
   toQuoteSearchParams,
 } from "@/lib/quote-filters";
+import { KIND_FILTER_LABEL } from "@/lib/source-kind";
 
 export const SEARCH_DEBOUNCE_MS = 250;
 export const PAGE_SIZE = 20;
@@ -77,6 +78,14 @@ function filterChips(
       kind: "Book",
       label: "No book",
       remove: () => set({ noBook: false }),
+    });
+  }
+  if (f.kind !== null) {
+    chips.push({
+      key: "kind",
+      kind: "Kind",
+      label: KIND_FILTER_LABEL[f.kind],
+      remove: () => set({ kind: null }),
     });
   }
   if (f.posted !== "any") {

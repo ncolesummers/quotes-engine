@@ -42,9 +42,15 @@ const QUOTE_PAIRS: [string, string][] = [
   ['"', '"'],
 ];
 
-/** Remove quotation marks that wrap the whole text (and only then). */
+// Music notes posts put around lyrics (`🎵 … 🎵`, `♪ … ♪`), with any spacing (#42).
+const OUTER_NOTES = /^(?:[🎵🎶♪♫]\uFE0F?)+\s*([\s\S]*?)\s*(?:[🎵🎶♪♫]\uFE0F?)+$/u;
+
+/**
+ * Remove quotation marks that wrap the whole text (and only then), and music notes wrapping a
+ * lyric.
+ */
 export function stripOuterQuotes(text: string): string {
-  const t = text.trim();
+  const t = text.trim().replace(OUTER_NOTES, "$1");
   for (const [open, close] of QUOTE_PAIRS) {
     if (t.length < 2 || !t.startsWith(open) || !t.endsWith(close)) continue;
     const inner = t.slice(open.length, -close.length);

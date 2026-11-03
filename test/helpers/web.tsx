@@ -64,6 +64,7 @@ export function quoteItem(overrides: Record<string, unknown> = {}) {
     author: "Kurt Vonnegut",
     sourceTitle: "Slaughterhouse-Five",
     notes: null,
+    sourceKind: "book",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     postingCount: 1,
@@ -245,6 +246,7 @@ export function reviewLink(
       text: `EXTRACTED QUOTE ${quoteId}`,
       author: null,
       sourceTitle: null,
+      sourceKind: "book",
       ...overrides.quote,
     },
   };

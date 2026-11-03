@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { listUnextractedPosts } from "../../server/repos/posts";
+import { listUnextractedPosts, requeuePosts } from "../../server/repos/posts";
 import { type OcrRunner, runOcr as runOcrStep } from "../ocr/run";
 import { assembleClassifications } from "./assemble";
 import { DEFAULT_BATCH_SIZE } from "./batches";
@@ -62,9 +62,21 @@ export interface ExtractNewOptions {
   now?: () => Date;
   batchSize?: number;
   log?: (message: string) => void;
+  /**
+   * `ig_media_id`s to extract again even though they were extracted (e.g. wrongly marked
+   * `no_quote`): they are queued before the run looks for new posts. Unknown ids are errors.
+   */
+  redo?: readonly string[];
 }
 
-export type IncrementalStage = "stale" | "ocr" | "batches" | "classify" | "assemble" | "import";
+export type IncrementalStage =
+  | "redo"
+  | "stale"
+  | "ocr"
+  | "batches"
+  | "classify"
+  | "assemble"
+  | "import";
 
 export interface IncrementalError {
   stage: IncrementalStage;
@@ -92,7 +104,9 @@ export interface StaleSummary {
 export interface ExtractNewSummary {
   /** Set when results from an earlier run were waiting. */
   stale?: StaleSummary;
-  /** Unextracted posts after any stale results were imported. */
+  /** Posts queued again by `redo`. */
+  requeued: number;
+  /** Unextracted posts after any stale results were imported (and `redo` posts queued). */
   unextracted: number;
   /** Images OCR'd in this run (already-OCR'd images are skipped). */
   ocrImages: number;
@@ -129,12 +143,14 @@ export async function extractNewPosts({
   now = () => new Date(),
   batchSize = DEFAULT_BATCH_SIZE,
   log = () => {},
+  redo = [],
 }: ExtractNewOptions): Promise<ExtractNewSummary> {
   const { extractionsDir, mediaDir, ocrDir } = paths;
   const todoDir = join(extractionsDir, "todo");
   const classifiedDir = join(extractionsDir, CLASSIFIED_SUBDIR);
   const stagingDir = resolve(extractionsDir, STAGING_SUBDIR);
   const summary: ExtractNewSummary = {
+    requeued: 0,
     unextracted: 0,
     ocrImages: 0,
     batches: 0,
@@ -195,7 +211,15 @@ export async function extractNewPosts({
     addImport(summary, imported);
   }
 
-  // 2. Nothing new: stop before OCR or any spawn.
+  // 2. Posts to extract again (`--redo`), after the stale import so it can't re-mark them.
+  if (redo.length > 0) {
+    const { requeued, missing } = requeuePosts(db, redo);
+    summary.requeued = requeued.length;
+    for (const id of missing) fail("redo", "no post with this ig_media_id", id);
+    if (requeued.length > 0) log(`Queued ${requeued.length} post(s) for extraction again`);
+  }
+
+  // Nothing new: stop before OCR or any spawn.
   summary.unextracted = listUnextractedPosts(db).length;
   if (summary.unextracted === 0) return summary;
 

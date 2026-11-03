@@ -1,7 +1,9 @@
+import { MusicIcon } from "lucide-react";
 import { Link } from "wouter";
 import type { QuoteSearchItem } from "@/api";
 import { bookHref, formatDate, formatNumber } from "@/lib/format";
 import { PostedBadge } from "./PostedBadge";
+import { Badge } from "./ui/badge";
 
 function Metric({ value, label }: { value: number; label: string }) {
   return (
@@ -33,7 +35,10 @@ export function QuoteCard({ quote }: { quote: QuoteSearchItem }) {
           <span aria-hidden>— </span>
           {quote.author && <span className="font-medium text-foreground/80">{quote.author}</span>}
           {quote.author && quote.sourceTitle && ", "}
-          {quote.sourceTitle && (
+          {quote.sourceTitle && quote.sourceKind !== "book" && (
+            <span className="font-serif italic">{quote.sourceTitle}</span>
+          )}
+          {quote.sourceTitle && quote.sourceKind === "book" && (
             <Link
               href={bookHref(quote.sourceTitle, quote.book?.id)}
               className="font-serif italic underline-offset-4 hover:text-primary hover:underline"
@@ -46,6 +51,12 @@ export function QuoteCard({ quote }: { quote: QuoteSearchItem }) {
 
       <footer className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/60 pt-4 text-xs text-muted-foreground">
         <PostedBadge count={quote.postingCount} />
+        {quote.sourceKind === "song" && (
+          <Badge variant="outline" className="gap-1 font-normal text-muted-foreground">
+            <MusicIcon aria-hidden className="size-3" />
+            Song
+          </Badge>
+        )}
         {posted && (
           <>
             <Metric value={quote.totalLikes} label="likes" />

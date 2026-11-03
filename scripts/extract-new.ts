@@ -4,8 +4,10 @@
  *
  *   bun run extract:new
  *   bun run extract:new --size 10
+ *   bun run extract:new --redo 18476265916078942 --redo 17915951145000482
  *
- * Exits early, without OCR or spawning anything, when every post is extracted. Posts stay
+ * `--redo <ig_media_id>` (repeatable) extracts a post again even though it was already processed
+ * or marked no_quote. Exits early, without OCR or spawning anything, when every post is extracted. Posts stay
  * unextracted on any failure, so the next run retries them. Exits 1 when anything failed.
  *
  * Env: QUOTES_DB_PATH, MEDIA_DIR (default data/media), OCR_DIR (default data/ocr),
@@ -34,7 +36,10 @@ import { DEFAULT_DB_PATH, openDb } from "../src/server/db/index";
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
-  options: { size: { type: "string", default: String(DEFAULT_BATCH_SIZE) } },
+  options: {
+    size: { type: "string", default: String(DEFAULT_BATCH_SIZE) },
+    redo: { type: "string", multiple: true, default: [] },
+  },
 });
 const batchSize = Number(values.size);
 if (!Number.isInteger(batchSize) || batchSize < 1) {
@@ -88,6 +93,7 @@ try {
     runOcr,
     runClassifier: createClaudeClassifier({ bin: claudeBin, timeoutMs }),
     batchSize,
+    redo: values.redo,
     log: (m) => console.warn(m),
   });
   const { errors, batchRuns, ...counts } = summary;

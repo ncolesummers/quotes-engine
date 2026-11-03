@@ -1,11 +1,12 @@
-import type { QuoteSearchParams, QuoteSort } from "@/api";
+import type { QuoteSearchParams, QuoteSort, SourceKind } from "@/api";
 import type { ParamPatch } from "@/hooks/use-search-param-state";
+import { parseSourceKind } from "@/lib/source-kind";
 
 /**
  * Search-page filters as they live in the URL (#14):
  *
  * `?sort=likes|comments|postings` (absent = recent), `?author=<name>`, `?book=<book id>`,
- * `?posted=yes|no`, `?reposted=1` (two or more postings) and `?nobook=1`.
+ * `?posted=yes|no`, `?reposted=1` (two or more postings), `?nobook=1` and `?kind=book|song|other`.
  *
  * Unknown values read as the default, so a hand-edited URL never breaks the page.
  */
@@ -18,6 +19,8 @@ export interface QuoteFilters {
   posted: PostedFilter;
   reposted: boolean;
   noBook: boolean;
+  /** Only quotes of this kind (#42); null = any. */
+  kind: SourceKind | null;
 }
 
 export const SORTS: { value: QuoteSort; label: string }[] = [
@@ -39,6 +42,7 @@ export function parseQuoteFilters(params: URLSearchParams): QuoteFilters {
   const author = params.get("author")?.trim();
   const bookId = /^[1-9]\d*$/.test(book) ? Number(book) : null;
   const reposted = params.get("reposted") === "1";
+  const kind = parseSourceKind(params.get("kind"));
   // A hand-edited URL can hold both halves of a pair `filterPatch` keeps apart; the more
   // specific one wins, so the page never asks for an always-empty result.
   return {
@@ -47,7 +51,10 @@ export function parseQuoteFilters(params: URLSearchParams): QuoteFilters {
     bookId,
     posted: posted === "yes" || (posted === "no" && !reposted) ? posted : "any",
     reposted,
-    noBook: params.get("nobook") === "1" && bookId === null,
+    // "No book" only means something for books.
+    noBook: params.get("nobook") === "1" && bookId === null && (kind ?? "book") === "book",
+    // A picked book is more specific than a song/other kind (which never has a book).
+    kind: bookId !== null && kind !== "book" ? null : kind,
   };
 }
 
@@ -56,7 +63,7 @@ export function toQuoteSearchParams(
   f: QuoteFilters,
 ): Pick<
   QuoteSearchParams,
-  "sort" | "authorExact" | "bookId" | "posted" | "minPostings" | "noBook"
+  "sort" | "authorExact" | "bookId" | "posted" | "minPostings" | "noBook" | "kind"
 > {
   return {
     sort: f.sort,
@@ -67,12 +74,14 @@ export function toQuoteSearchParams(
     ...(f.posted !== "any" && { posted: f.posted }),
     ...(f.reposted && { minPostings: REPOSTED_MIN_POSTINGS }),
     noBook: f.noBook,
+    ...(f.kind !== null && { kind: f.kind }),
   };
 }
 
 /**
  * The URL change for setting some filters. Contradictory pairs exclude each other: a picked
- * book turns off "No book" (and vice versa), "Reposted only" turns off "Never posted".
+ * book turns off "No book" (and vice versa), "Reposted only" turns off "Never posted", and a
+ * song or other kind turns off "No book" and the picked book (which only books have).
  */
 export function filterPatch(change: Partial<QuoteFilters>): ParamPatch {
   const patch: ParamPatch = {};
@@ -80,11 +89,18 @@ export function filterPatch(change: Partial<QuoteFilters>): ParamPatch {
   if ("author" in change) patch.author = change.author;
   if ("bookId" in change) {
     patch.book = change.bookId == null ? null : String(change.bookId);
-    if (change.bookId != null) patch.nobook = null;
+    // A picked book (or "No book") implies a book quote, so it drops a kind filter.
+    if (change.bookId != null) {
+      patch.nobook = null;
+      patch.kind = null;
+    }
   }
   if ("noBook" in change) {
     patch.nobook = change.noBook ? "1" : null;
-    if (change.noBook) patch.book = null;
+    if (change.noBook) {
+      patch.book = null;
+      patch.kind = null;
+    }
   }
   if ("posted" in change) {
     patch.posted = change.posted === "any" ? null : change.posted;
@@ -93,6 +109,13 @@ export function filterPatch(change: Partial<QuoteFilters>): ParamPatch {
   if ("reposted" in change) {
     patch.reposted = change.reposted ? "1" : null;
     if (change.reposted) patch.posted = null;
+  }
+  if ("kind" in change) {
+    patch.kind = change.kind ?? null;
+    if (change.kind && change.kind !== "book") {
+      patch.nobook = null;
+      patch.book = null;
+    }
   }
   return patch;
 }
@@ -104,4 +127,5 @@ export const CLEAR_FILTERS: ParamPatch = {
   posted: null,
   reposted: null,
   nobook: null,
+  kind: null,
 };

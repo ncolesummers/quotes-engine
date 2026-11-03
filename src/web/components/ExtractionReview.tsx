@@ -3,15 +3,18 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
+  MusicIcon,
   XIcon,
 } from "lucide-react";
 import { type Ref, useRef, useState } from "react";
 import { ApiError, conflictIdOf, type LinkMethod, type QuotePatch, type ReviewLink } from "@/api";
 import { InlineEdit, type InlineEditHandle } from "@/components/InlineEdit";
 import { PostThumbnail } from "@/components/PostThumbnail";
+import { SourceKindPicker } from "@/components/SourceKindPicker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/format";
+import { SOURCE_KIND_LABELS } from "@/lib/source-kind";
 
 const METHOD_LABEL: Record<LinkMethod, string> = {
   image: "Read from the image",
@@ -36,6 +39,8 @@ export interface ExtractionReviewProps {
   total: number;
   onConfirm: () => void;
   onReject: () => void;
+  /** Mark the quote a song (unlinking its book) and confirm the link. */
+  onMarkSong: () => void;
   onPrev: () => void;
   onNext: () => void;
   onEdit: (patch: QuotePatch) => Promise<unknown>;
@@ -52,6 +57,7 @@ export function ExtractionReview({
   total,
   onConfirm,
   onReject,
+  onMarkSong,
   onPrev,
   onNext,
   onEdit,
@@ -60,7 +66,9 @@ export function ExtractionReview({
 }: ExtractionReviewProps) {
   const { post, quote } = link;
   const date = formatDate(post.postedAt);
-  const save = (field: keyof QuotePatch) => (value: string | null) => onEdit({ [field]: value });
+  const save = (field: Exclude<keyof QuotePatch, "sourceKind">) => (value: string | null) =>
+    onEdit({ [field]: value });
+  const labels = SOURCE_KIND_LABELS[quote.sourceKind];
   const merging = useRef(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
 
@@ -202,21 +210,31 @@ export function ExtractionReview({
 
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-2 text-sm text-muted-foreground">
             <span aria-hidden>—</span>
-            <InlineEdit noun="author" label="Author" value={quote.author} onSave={save("author")}>
+            <InlineEdit
+              noun={labels.author.toLowerCase()}
+              label={labels.author}
+              value={quote.author}
+              onSave={save("author")}
+            >
               {(author) => <span className="font-medium text-foreground/85">{author}</span>}
             </InlineEdit>
             <span aria-hidden className="text-muted-foreground/50">
               ·
             </span>
             <InlineEdit
-              noun="book"
-              label="Book"
+              noun={labels.source.toLowerCase()}
+              label={labels.source}
               value={quote.sourceTitle}
               onSave={save("sourceTitle")}
             >
               {(title) => <span className="font-serif italic">{title}</span>}
             </InlineEdit>
           </div>
+
+          <SourceKindPicker
+            value={quote.sourceKind}
+            onSave={(sourceKind) => onEdit({ sourceKind })}
+          />
 
           <section aria-label="Caption" className="flex flex-col gap-1.5">
             <h3 className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
@@ -241,6 +259,16 @@ export function ExtractionReview({
               <XIcon aria-hidden />
               Reject
               <Kbd>r</Kbd>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={onMarkSong}
+              aria-keyshortcuts="s"
+              title="It's a song lyric: mark it a song, unlink any book and confirm"
+            >
+              <MusicIcon aria-hidden />
+              Mark as song
+              <Kbd>s</Kbd>
             </Button>
             <span className="ml-auto text-xs text-muted-foreground">
               <kbd className="rounded border px-1 font-sans">e</kbd> fixes the text

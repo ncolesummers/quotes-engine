@@ -235,9 +235,11 @@ export function importAppleBooks(db: Database, data: AppleBooksData): ImportBook
         "SELECT id FROM quotes WHERE normalized_text = $normalized",
       );
       const setQuote = db.query("UPDATE highlights SET quote_id = $quoteId WHERE id = $id");
-      // As in `fillMissing`: a linked highlight names the quote's book when it has none.
+      // As in `fillMissing`: a linked highlight names the quote's book when it has none (songs
+      // and other non-book quotes never get one).
       const fillQuoteBook = db.query(
-        "UPDATE quotes SET book_id = $bookId WHERE id = $quoteId AND book_id IS NULL",
+        `UPDATE quotes SET book_id = $bookId
+         WHERE id = $quoteId AND book_id IS NULL AND source_kind = 'book'`,
       );
 
       const link = (id: number, h: AppleHighlight, bookId: number) => {

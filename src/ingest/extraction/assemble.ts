@@ -141,7 +141,7 @@ function assembleQuote(
   post: ClassificationBatchPost,
   ocr: PostOcr | null,
 ): ExtractedQuote {
-  const base = { author: q.author, source: q.source };
+  const base = { author: q.author, source: q.source, kind: q.kind };
   if (q.image === null || q.lines === null) {
     const text = stripOuterQuotes(captionText(q, post.caption));
     if (!text) throw new Error("from_caption quote, but the caption has no text besides tags");

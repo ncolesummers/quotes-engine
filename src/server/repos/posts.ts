@@ -125,3 +125,28 @@ export function markExtracted(db: Database, postId: number, extractedAt: string)
     extractedAt: toIsoUtc(extractedAt),
   });
 }
+
+export interface RequeueSummary {
+  /** `ig_media_id`s now unextracted (queued for `extract:new`). */
+  requeued: string[];
+  /** `ig_media_id`s with no post. */
+  missing: string[];
+}
+
+/**
+ * Queue posts for extraction again (`extract:new --redo`), e.g. ones wrongly marked `no_quote`:
+ * clears `extracted_at`. Existing quote links are kept; a re-import leaves them as they are.
+ */
+export function requeuePosts(db: Database, igMediaIds: readonly string[]): RequeueSummary {
+  const summary: RequeueSummary = { requeued: [], missing: [] };
+  const clear = db.query<{ id: number }, { igMediaId: string }>(
+    "UPDATE posts SET extracted_at = NULL WHERE ig_media_id = $igMediaId RETURNING id",
+  );
+  db.transaction(() => {
+    for (const igMediaId of new Set(igMediaIds)) {
+      if (clear.get({ igMediaId })) summary.requeued.push(igMediaId);
+      else summary.missing.push(igMediaId);
+    }
+  }).immediate();
+  return summary;
+}

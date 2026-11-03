@@ -12,6 +12,7 @@ describe("ClassifiedQuoteSchema", () => {
       lines: [0, 3],
       from_caption: false,
       caption_lines: null,
+      kind: "book",
     });
   });
 

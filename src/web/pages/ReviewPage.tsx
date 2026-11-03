@@ -67,6 +67,7 @@ export function ReviewPage() {
       ? {
           c: () => act(link, "confirm"),
           r: () => act(link, "reject"),
+          s: () => act(link, "song"),
           e: () => editRef.current?.edit(),
           j: () => setLinkIndex(clamp(li + 1, links.length)),
           k: () => setLinkIndex(clamp(li - 1, links.length)),
@@ -136,6 +137,7 @@ export function ReviewPage() {
                   editRef={editRef}
                   onConfirm={() => act(link, "confirm")}
                   onReject={() => act(link, "reject")}
+                  onMarkSong={() => act(link, "song")}
                   onPrev={() => setLinkIndex(clamp(li - 1, links.length))}
                   onNext={() => setLinkIndex(clamp(li + 1, links.length))}
                   onEdit={(patch) => editQuote(link.quoteId, patch)}

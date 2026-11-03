@@ -125,6 +125,7 @@ export function useReviewQueue() {
         text: detail.quote.text,
         author: detail.quote.author,
         sourceTitle: detail.quote.sourceTitle,
+        sourceKind: detail.quote.sourceKind,
       };
       await removeOptimistically(queryClient, (q) => ({
         // The server moves the dropped quote's links onto the kept one, unless the kept quote
@@ -153,11 +154,12 @@ export function useReviewQueue() {
       const fields = { text: quote.text, author: quote.author, sourceTitle: quote.sourceTitle };
       const patchSide = <T extends { id: number }>(side: T): T =>
         side.id === quoteId ? { ...side, ...fields } : side;
+      const linkFields = { ...fields, sourceKind: quote.sourceKind };
       queryClient.setQueryData<ReviewQueue>(queryKeys.review, (q) =>
         q
           ? {
               links: q.links.map((l) =>
-                l.quoteId === quoteId ? { ...l, quote: { ...l.quote, ...fields } } : l,
+                l.quoteId === quoteId ? { ...l, quote: { ...l.quote, ...linkFields } } : l,
               ),
               duplicates: q.duplicates.map((p) => ({ ...p, a: patchSide(p.a), b: patchSide(p.b) })),
             }

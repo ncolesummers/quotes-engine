@@ -12,7 +12,7 @@ You are classifying Instagram posts for a personal quote catalog. The text of ea
 
 ## Never write out quote text
 
-**Never write quote text** — not in the result file, not in your reply, not paraphrased, not partly. Refer to a quote only by its line numbers: image lines (`"image"` + `"lines"`) or caption segments (`"from_caption": true` + `"caption_lines"`). The quote text is filled in later by code, from the OCR. Your output holds only line references, names, titles, flags and numbers. Do not open the images either: everything you need is in the batch file.
+**Never write quote text** — not in the result file, not in your reply, not paraphrased, not partly. The same goes for song lyrics: refer to them by line numbers only. Refer to a quote only by its line numbers: image lines (`"image"` + `"lines"`) or caption segments (`"from_caption": true` + `"caption_lines"`). The quote text is filled in later by code, from the OCR. Your output holds only line references, names, titles, flags and numbers. Do not open the images either: everything you need is in the batch file.
 
 ## Input
 
@@ -46,7 +46,8 @@ It looks like `{"posts": [{"ig_media_id", "posted_at", "caption", "caption_lines
    - An attribution printed in the image counts too.
    - Set `source` only when a book or series is clearly named (by a tag, the caption or the image). Otherwise use null. Use null for `author` when nothing names one.
    - **Ignore process/tool tags**: `#pythonimaginglibrary`, `#p5js`, `#gnuterrypratchett` and generic tags (`#quote`, `#books`, `#reading`, `#bookstagram`, ...) are never an author or a source.
-5. **The account's own commentary is not a quote.** Short captions like "Find your joy wherever you can." are usually the poster's comment; the quote is then in the image. Only record text that is quoted from a book, person or other work.
+   - **`kind`**: what the quote comes from: `"book"` (the default), `"song"` or `"other"` (a film, show, speech, ...). Quotes can come from songs. For a song, put the **artist** (singer or band) in `author` and the **song title** in `source`, and set `"kind": "song"`. Signs of a song: the text is wrapped in or marked with music notes (`🎵`, `🎶`, `♪`, `♫`), or the tags name a band or musician (e.g. `#greenday`) rather than a writer or a book.
+5. **The account's own commentary is not a quote.** Short captions like "Find your joy wherever you can." are usually the poster's comment; the quote is then in the image. Only record text that is quoted from a book, person, song or other work. **Lyrics are quotes, not commentary**: a caption that is a song lyric (often between `🎵` or `♪` marks, or with artist/band tags) is a quote with `"kind": "song"`, even with no attribution line.
 6. **Non-quote posts** (e.g. "Wine ❤️", thanking someone for a mug, a photo with no quoted text) get `"quotes": []` and `"no_quote": true`. So do posts whose images have no lines and whose caption holds no quote.
 7. **Carousels may contain several quotes**: add one entry to `quotes` per distinct quote. If the same quote appears in the image and the caption, record it once with the image's lines and `"from_caption": true`.
 8. **`confidence`** is a number from 0 to 1 for the whole entry (line range and attribution). Use about 0.9–1 when the quote's lines are clear and the attribution is explicit. Lower it (≤ 0.7) when the OCR lines look garbled or the quote's boundaries are unclear, or when the author/source is a guess (e.g. inferred from an ambiguous hashtag). It is combined with the OCR's own confidence; entries below 0.8 go to a human review queue, so be honest.
@@ -61,16 +62,17 @@ It must be valid JSON matching this schema exactly — no extra keys, no comment
 
 - `"results"`: an array with **one result per input post, in input order** (same `ig_media_id`s, none added, none left out).
 - Each result: `"ig_media_id"` (string, copied from the input), `"no_quote"` (boolean; true only when `quotes` is empty because the post has no quote), `"quotes"` (array).
-- Each quote: `"image"` (image number, or omitted for a caption-only quote), `"lines"` (`[start, end]`, or omitted for a caption-only quote), `"from_caption"` (boolean), `"caption_lines"` (`[start, end]`, only for a caption-only quote), `"author"` (string or null), `"source"` (string or null), `"confidence"` (number 0–1). **There is no `text` key**: a file with quote text in it is rejected.
+- Each quote: `"image"` (image number, or omitted for a caption-only quote), `"lines"` (`[start, end]`, or omitted for a caption-only quote), `"from_caption"` (boolean), `"caption_lines"` (`[start, end]`, only for a caption-only quote), `"author"` (string or null), `"source"` (string or null), `"kind"` (`"book"`, `"song"` or `"other"`; may be omitted for a book), `"confidence"` (number 0–1). **There is no `text` key**: a file with quote text in it is rejected.
 
-Example (a single-image post, a carousel with two quotes, a caption-only quote and a non-quote post):
+Example (a single-image post, a carousel with two quotes, a caption-only quote, a caption-only song lyric and a non-quote post):
 
 ```json
 {"results": [
   {"ig_media_id":"17890000000000001","no_quote":false,"quotes":[{"image":1,"lines":[0,3],"from_caption":false,"author":"Joe Abercrombie","source":"The First Law","confidence":0.9}]},
   {"ig_media_id":"17890000000000002","no_quote":false,"quotes":[{"image":1,"lines":[1,3],"from_caption":false,"author":"Robin Hobb","source":"Fool's Errand","confidence":0.95},{"image":2,"lines":[0,2],"from_caption":false,"author":"Robin Hobb","source":"Fool's Errand","confidence":0.85}]},
   {"ig_media_id":"17890000000000003","no_quote":false,"quotes":[{"from_caption":true,"caption_lines":[0,0],"author":"Haruki Murakami","source":"Kafka on the Shore","confidence":0.8}]},
-  {"ig_media_id":"17890000000000004","no_quote":true,"quotes":[]}
+  {"ig_media_id":"17890000000000004","no_quote":false,"quotes":[{"from_caption":true,"caption_lines":[0,1],"author":"The Paper Lanterns","source":"Northbound Static","kind":"song","confidence":0.85}]},
+  {"ig_media_id":"17890000000000005","no_quote":true,"quotes":[]}
 ]}
 ```
 

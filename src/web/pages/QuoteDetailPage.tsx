@@ -17,10 +17,12 @@ import { PostedBadge } from "@/components/PostedBadge";
 import { PostingsComparison } from "@/components/PostingsComparison";
 import { PostingsTimeline } from "@/components/PostingsTimeline";
 import { QuoteHighlights } from "@/components/QuoteHighlights";
+import { SourceKindPicker } from "@/components/SourceKindPicker";
 import { Button } from "@/components/ui/button";
 import { sortPostings, toChartData } from "@/lib/chart-data";
 import { bookHref } from "@/lib/format";
 import { queryKeys } from "@/lib/query";
+import { SOURCE_KIND_LABELS } from "@/lib/source-kind";
 
 export const DUPLICATE_TEXT_MESSAGE = "Another quote already has this text — merge instead?";
 
@@ -111,6 +113,7 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
 
   const { quote, highlights, book } = query.data;
   const detailKey = queryKeys.quotes.detail(id);
+  const labels = SOURCE_KIND_LABELS[quote.sourceKind];
 
   const refreshLists = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.quotes.searches });
@@ -119,8 +122,8 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
     queryClient.invalidateQueries({ queryKey: queryKeys.authors });
   };
 
-  const save = (field: keyof QuotePatch) => async (value: string | null) => {
-    const updated = await updateQuote(id, { [field]: value });
+  const patchQuote = async (patch: QuotePatch) => {
+    const updated = await updateQuote(id, patch);
     const bookChanged = (updated.bookId ?? null) !== (query.data.book?.id ?? null);
     queryClient.setQueryData<QuoteDetail>(detailKey, (prev) =>
       prev ? { ...prev, quote: updated, book: bookChanged ? null : prev.book } : prev,
@@ -129,6 +132,8 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
     if (bookChanged) queryClient.invalidateQueries({ queryKey: detailKey });
     refreshLists();
   };
+  const save = (field: Exclude<keyof QuotePatch, "sourceKind">) => (value: string | null) =>
+    patchQuote({ [field]: value });
 
   const onMerge = async (dropId: number) => {
     const detail = await mergeQuote(id, dropId);
@@ -205,28 +210,41 @@ export function QuoteDetailPage({ id: rawId }: { id: string }) {
 
           <figcaption className="flex flex-wrap items-baseline gap-x-2 gap-y-2 text-base text-muted-foreground">
             <span aria-hidden>—</span>
-            <InlineEdit noun="author" label="Author" value={quote.author} onSave={save("author")}>
+            <InlineEdit
+              noun={labels.author.toLowerCase()}
+              label={labels.author}
+              value={quote.author}
+              onSave={save("author")}
+            >
               {(author) => <span className="font-medium text-foreground/85">{author}</span>}
             </InlineEdit>
             <span aria-hidden className="text-muted-foreground/50">
               ·
             </span>
             <InlineEdit
-              noun="book"
-              label="Book"
+              noun={labels.source.toLowerCase()}
+              label={labels.source}
               value={quote.sourceTitle}
               onSave={save("sourceTitle")}
             >
-              {(title) => (
-                <Link
-                  href={bookHref(title, book?.id)}
-                  className="font-serif italic underline-offset-4 hover:text-primary hover:underline"
-                >
-                  {title}
-                </Link>
-              )}
+              {(title) =>
+                quote.sourceKind !== "book" ? (
+                  <span className="font-serif italic">{title}</span>
+                ) : (
+                  <Link
+                    href={bookHref(title, book?.id)}
+                    className="font-serif italic underline-offset-4 hover:text-primary hover:underline"
+                  >
+                    {title}
+                  </Link>
+                )
+              }
             </InlineEdit>
           </figcaption>
+          <SourceKindPicker
+            value={quote.sourceKind}
+            onSave={(sourceKind) => patchQuote({ sourceKind })}
+          />
         </figure>
 
         <div className="border-l-2 border-border pl-4 text-sm text-muted-foreground">

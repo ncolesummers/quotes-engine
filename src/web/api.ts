@@ -70,6 +70,9 @@ export function apiSend<T>(
 // ---------------------------------------------------------------------------
 // Types mirrored from the server (keep in sync with src/server/repos/*).
 
+/** What a quote comes from. For a song, `author` is the artist and `sourceTitle` the song. */
+export type SourceKind = "book" | "song" | "other";
+
 export interface Quote {
   id: number;
   text: string;
@@ -77,7 +80,8 @@ export interface Quote {
   author: string | null;
   sourceTitle: string | null;
   notes: string | null;
-  /** The book `sourceTitle` resolved to, or null. */
+  sourceKind: SourceKind;
+  /** The book `sourceTitle` resolved to, or null (always null for songs and other sources). */
   bookId: number | null;
   createdAt: string;
   updatedAt: string;
@@ -140,6 +144,8 @@ export interface QuotePatch {
   author?: string | null;
   sourceTitle?: string | null;
   notes?: string | null;
+  /** "song" or "other" unlinks the quote's book. */
+  sourceKind?: SourceKind;
 }
 
 export interface Page<T> {
@@ -161,8 +167,9 @@ export interface QuoteSearchParams {
   bookId?: number;
   posted?: "yes" | "no";
   minPostings?: number;
-  /** Only quotes not linked to a book. */
+  /** Only book quotes not linked to a book. */
   noBook?: boolean;
+  kind?: SourceKind;
   sort?: QuoteSort;
   limit?: number;
   offset?: number;
@@ -418,7 +425,13 @@ export interface ReviewLink {
     /** `/media/<file>` when the post's image was downloaded, else null. */
     mediaUrl: string | null;
   };
-  quote: { id: number; text: string; author: string | null; sourceTitle: string | null };
+  quote: {
+    id: number;
+    text: string;
+    author: string | null;
+    sourceTitle: string | null;
+    sourceKind: SourceKind;
+  };
 }
 
 export interface DuplicateQuote {
@@ -442,13 +455,14 @@ export interface ReviewQueue {
   duplicates: DuplicatePair[];
 }
 
-export type ReviewAction = "confirm" | "reject";
+/** `song` marks the quote a song (unlinking its book) and confirms the link. */
+export type ReviewAction = "confirm" | "reject" | "song";
 
 export function fetchReview(): Promise<ReviewQueue> {
   return apiGet("/api/review");
 }
 
-/** Confirm a link (marks it confirmed) or reject it (deletes it). */
+/** Confirm a link (marks it confirmed), reject it (deletes it), or mark its quote a song. */
 export function resolveReviewLink(
   postId: number,
   quoteId: number,

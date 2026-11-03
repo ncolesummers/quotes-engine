@@ -7,7 +7,14 @@ import { listAuthors } from "./repos/authors";
 import { deleteBook, mergeBooks, updateBook } from "./repos/book-cleanup";
 import { getBook, getBookDetail, listBooks } from "./repos/books";
 import { getQuoteHighlights, listHighlightBooks, listHighlights } from "./repos/highlights";
-import { getQuote, getQuoteDetail, mergeQuotes, searchQuotes, updateQuote } from "./repos/quotes";
+import {
+  getQuote,
+  getQuoteDetail,
+  mergeQuotes,
+  SOURCE_KINDS,
+  searchQuotes,
+  updateQuote,
+} from "./repos/quotes";
 import {
   dismissDuplicatePair,
   findDuplicatePairs,
@@ -118,6 +125,8 @@ const flag = z
   .optional()
   .transform((v) => v === "1" || v === "true");
 
+const sourceKind = z.enum(SOURCE_KINDS);
+
 const quotesQuery = z.object({
   q: text,
   author: text,
@@ -127,6 +136,7 @@ const quotesQuery = z.object({
   posted: z.enum(["yes", "no"]).optional(),
   minPostings: z.coerce.number().int().min(0).optional(),
   noBook: flag,
+  kind: sourceKind.optional(),
   sort: z.enum(["likes", "comments", "recent", "postings"]).default("recent"),
   limit,
   offset,
@@ -145,6 +155,7 @@ const quotePatch = z
     author: nullableText,
     sourceTitle: nullableText,
     notes: nullableText,
+    sourceKind: sourceKind.optional(),
   })
   .refine((p) => Object.values(p).some((v) => v !== undefined), "No fields to update");
 
@@ -175,7 +186,7 @@ const bookPatch = z
   })
   .refine((p) => p.title !== undefined || p.author !== undefined, "No fields to update");
 
-const reviewBody = z.object({ action: z.enum(["confirm", "reject"]) });
+const reviewBody = z.object({ action: z.enum(["confirm", "reject", "song"]) });
 
 const dismissBody = z
   .object({ aId: positiveInt, bId: positiveInt })

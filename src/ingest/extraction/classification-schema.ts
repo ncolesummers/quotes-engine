@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SourceKindSchema } from "./schema";
 
 const nullableString = z
   .string()
@@ -32,6 +33,8 @@ export const ClassifiedQuoteSchema = z
       .transform((v) => v ?? null),
     author: nullableString,
     source: nullableString,
+    /** "song" for lyrics: `author` is the artist and `source` the song (#42). */
+    kind: SourceKindSchema,
     confidence: z.number().min(0).max(1),
   })
   .strict()
