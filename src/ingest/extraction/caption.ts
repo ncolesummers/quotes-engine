@@ -43,7 +43,7 @@ const QUOTE_PAIRS: [string, string][] = [
 ];
 
 // Music notes posts put around lyrics (`🎵 … 🎵`, `♪ … ♪`), with any spacing (#42).
-const OUTER_NOTES = /^[🎵🎶♪♫]+\s*([\s\S]*?)\s*[🎵🎶♪♫]+$/u;
+const OUTER_NOTES = /^(?:[🎵🎶♪♫]\uFE0F?)+\s*([\s\S]*?)\s*(?:[🎵🎶♪♫]\uFE0F?)+$/u;
 
 /**
  * Remove quotation marks that wrap the whole text (and only then), and music notes wrapping a

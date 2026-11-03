@@ -7,7 +7,14 @@ import { listAuthors } from "./repos/authors";
 import { deleteBook, mergeBooks, updateBook } from "./repos/book-cleanup";
 import { getBook, getBookDetail, listBooks } from "./repos/books";
 import { getQuoteHighlights, listHighlightBooks, listHighlights } from "./repos/highlights";
-import { getQuote, getQuoteDetail, mergeQuotes, searchQuotes, updateQuote } from "./repos/quotes";
+import {
+  getQuote,
+  getQuoteDetail,
+  mergeQuotes,
+  SOURCE_KINDS,
+  searchQuotes,
+  updateQuote,
+} from "./repos/quotes";
 import {
   dismissDuplicatePair,
   findDuplicatePairs,
@@ -118,7 +125,7 @@ const flag = z
   .optional()
   .transform((v) => v === "1" || v === "true");
 
-const sourceKind = z.enum(["book", "song", "other"]);
+const sourceKind = z.enum(SOURCE_KINDS);
 
 const quotesQuery = z.object({
   q: text,

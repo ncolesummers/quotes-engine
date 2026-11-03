@@ -16,7 +16,9 @@ import { likeContains } from "./sql";
  * What a quote comes from (#42). For a song, `author` is the artist and `sourceTitle` the song.
  * Only "book" quotes link to a book.
  */
-export type SourceKind = "book" | "song" | "other";
+/** What a quote comes from (#42); mirrors the `quotes.source_kind` CHECK constraint. */
+export const SOURCE_KINDS = ["book", "song", "other"] as const;
+export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 export interface Quote {
   id: number;
@@ -148,29 +150,45 @@ function resolveBookId(
   return findOrCreateBook(db, { title: sourceTitle, author, source })?.id ?? null;
 }
 
+/** True when a quote has no author, source title or book yet. */
+function isBare(quote: Quote): boolean {
+  return quote.author === null && quote.sourceTitle === null && quote.bookId === null;
+}
+
 /**
  * Fill a quote's missing author/source/book from `input`; never overwrites existing values.
  * The book comes from a linked highlight, else the quote's (possibly just filled) source title.
+ * Attribution is only taken from an input of the same kind: a bare book quote (the default
+ * kind) takes a song input's kind with it, but a song's artist is never filled in as a book
+ * quote's author, nor a book's title into a song.
  */
 function fillMissing(db: Database, quote: Quote, input: QuoteInput): Quote {
+  const inputKind = input.sourceKind ?? "book";
+  const kind = quote.sourceKind === "book" && isBare(quote) ? inputKind : quote.sourceKind;
+  if (kind !== inputKind) return quote;
   const author = quote.author ?? input.author ?? null;
   const sourceTitle = quote.sourceTitle ?? input.sourceTitle ?? null;
-  // Songs and other non-book sources never get a book, whichever side says so.
-  const isBook = quote.sourceKind === "book" && (input.sourceKind ?? "book") === "book";
+  // Songs and other non-book sources never get a book.
   // A linked Apple Books highlight names the book more reliably than a caption's wording.
-  const bookId = !isBook
-    ? quote.bookId
-    : (quote.bookId ??
-      highlightBookId(db, quote.id) ??
-      resolveBookId(db, sourceTitle, author, input.bookSource));
-  if (author === quote.author && sourceTitle === quote.sourceTitle && bookId === quote.bookId) {
+  const bookId =
+    kind !== "book"
+      ? quote.bookId
+      : (quote.bookId ??
+        highlightBookId(db, quote.id) ??
+        resolveBookId(db, sourceTitle, author, input.bookSource));
+  if (
+    kind === quote.sourceKind &&
+    author === quote.author &&
+    sourceTitle === quote.sourceTitle &&
+    bookId === quote.bookId
+  ) {
     return quote;
   }
   db.query(
-    `UPDATE quotes SET author = $author, source_title = $sourceTitle, book_id = $bookId,
-       updated_at = ${NOW_SQL}
+    `UPDATE quotes SET author = $author, source_title = $sourceTitle, source_kind = $kind,
+       book_id = $bookId, updated_at = ${NOW_SQL}
      WHERE id = $id`,
-  ).run({ id: quote.id, author, sourceTitle, bookId });
+  ).run({ id: quote.id, author, sourceTitle, kind, bookId });
   return requireQuote(db, quote.id);
 }
 
@@ -384,8 +402,8 @@ export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote
   if (keepId === dropId) throw new Error("Cannot merge a quote into itself");
   return db
     .transaction((): Quote => {
-      requireQuote(db, keepId);
-      requireQuote(db, dropId);
+      const keep = requireQuote(db, keepId);
+      const drop = requireQuote(db, dropId);
       const ids = { keepId, dropId };
       db.query(
         `INSERT OR IGNORE INTO post_quotes (post_id, quote_id, method, confidence, status)
@@ -400,20 +418,27 @@ export function mergeQuotes(db: Database, keepId: number, dropId: number): Quote
          FROM quote_not_duplicates WHERE $dropId IN (a_id, b_id)
        ) WHERE other != $keepId`,
       ).run(ids);
+      // A bare kept quote takes the dropped one's kind; otherwise the kept quote's kind wins.
+      // Attribution and book only carry over between quotes of the same kind (#42).
+      const kind = isBare(keep) ? drop.sourceKind : keep.sourceKind;
+      const sameKind = kind === drop.sourceKind;
+      const bookId = kind === "book" ? (keep.bookId ?? (sameKind ? drop.bookId : null)) : null;
       db.query(
         `UPDATE quotes SET
-         author = COALESCE(author, (SELECT author FROM quotes WHERE id = $dropId)),
-         source_title = COALESCE(source_title, (SELECT source_title FROM quotes WHERE id = $dropId)),
+         author = $author, source_title = $sourceTitle, source_kind = $kind, book_id = $bookId,
          notes = COALESCE(notes, (SELECT notes FROM quotes WHERE id = $dropId)),
-         -- A bare kept quote (no attribution at all) takes the dropped one's kind with it.
-         source_kind = CASE WHEN author IS NULL AND source_title IS NULL AND book_id IS NULL
-           THEN (SELECT source_kind FROM quotes WHERE id = $dropId) ELSE source_kind END,
-         book_id = CASE WHEN source_kind = 'book'
-           THEN COALESCE(book_id, (SELECT book_id FROM quotes WHERE id = $dropId)) END,
          updated_at = ${NOW_SQL}
        WHERE id = $keepId`,
-      ).run(ids);
+      ).run({
+        keepId,
+        dropId,
+        kind,
+        bookId,
+        author: keep.author ?? (sameKind ? drop.author : null),
+        sourceTitle: keep.sourceTitle ?? (sameKind ? drop.sourceTitle : null),
+      });
       db.query("DELETE FROM quotes WHERE id = $dropId").run({ dropId });
+      if (drop.bookId !== null && drop.bookId !== bookId) deleteBookIfEmpty(db, drop.bookId);
       return requireQuote(db, keepId);
     })
     .immediate();

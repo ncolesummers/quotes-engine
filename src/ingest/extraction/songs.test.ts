@@ -33,6 +33,10 @@ describe("ExtractionFileSchema kind", () => {
     expect(kindOf({ ...q, kind: "other" })).toBe("other");
     expect(ExtractionFileSchema.safeParse(file({ ...q, kind: "poem" })).success).toBe(false);
   });
+
+  test("null means book, like the other nullable fields", () => {
+    expect(kindOf({ ...q, kind: null })).toBe("book");
+  });
 });
 
 describe("ClassifiedQuoteSchema kind", () => {
@@ -42,6 +46,12 @@ describe("ClassifiedQuoteSchema kind", () => {
     expect(ClassifiedQuoteSchema.parse({ ...base, from_caption: true }).kind).toBe("book");
     const song = ClassifiedQuoteSchema.parse({ ...base, from_caption: true, kind: "song" });
     expect(song.kind).toBe("song");
+  });
+
+  test("null means book", () => {
+    expect(ClassifiedQuoteSchema.parse({ ...base, from_caption: true, kind: null }).kind).toBe(
+      "book",
+    );
   });
 
   test("rejects an unknown kind", () => {
@@ -55,6 +65,11 @@ describe("stripOuterQuotes with music notes", () => {
     expect(stripOuterQuotes(`🎵 ${LYRIC} 🎵`)).toBe(LYRIC);
     expect(stripOuterQuotes("♪ Made-up line ♪")).toBe("Made-up line");
     expect(stripOuterQuotes("🎶“Another invented line”🎶")).toBe("Another invented line");
+  });
+
+  test("removes notes carrying a U+FE0F variation selector", () => {
+    expect(stripOuterQuotes(`🎵\uFE0F ${LYRIC} 🎵\uFE0F`)).toBe(LYRIC);
+    expect(stripOuterQuotes(`♪\uFE0F${LYRIC}♪\uFE0F`)).toBe(LYRIC);
   });
 
   test("leaves a note inside the text alone", () => {

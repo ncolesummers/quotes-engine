@@ -161,7 +161,13 @@ export function resolveLink(
         )
         .run(ids);
       if (confirmed.changes === 0) return false;
-      if (action === "song") updateQuote(db, quoteId, { sourceKind: "song" });
+      if (action === "song") {
+        const result = updateQuote(db, quoteId, { sourceKind: "song" });
+        // Throwing rolls back the confirmation too, so the link isn't confirmed as a song.
+        if (result.status !== "updated") {
+          throw new Error(`Could not mark quote ${quoteId} a song: ${result.status}`);
+        }
+      }
       return true;
     })
     .immediate();

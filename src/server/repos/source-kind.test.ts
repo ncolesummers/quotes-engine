@@ -156,6 +156,53 @@ describe("upsertQuote sourceKind", () => {
   });
 });
 
+describe("upsertQuote sourceKind: matching an existing quote", () => {
+  test("a bare book quote matched by a song becomes that song", () => {
+    const existing = s.quote({ text: LYRIC });
+    const { quote } = upsertQuote(db, {
+      text: LYRIC,
+      author: "Paper Lanterns",
+      sourceTitle: "Northbound Static",
+      sourceKind: "song",
+      bookSource: "caption",
+    });
+    expect(quote.id).toBe(existing.id);
+    expect(quote).toMatchObject({
+      sourceKind: "song",
+      author: "Paper Lanterns",
+      sourceTitle: "Northbound Static",
+      bookId: null,
+    });
+    expect(bookCount()).toBe(0);
+  });
+
+  test("an attributed book quote doesn't take a song's title", () => {
+    s.quote({ text: LYRIC, author: "An Author" });
+    const { quote } = upsertQuote(db, {
+      text: LYRIC,
+      author: "Paper Lanterns",
+      sourceTitle: "Northbound Static",
+      sourceKind: "song",
+      bookSource: "caption",
+    });
+    expect(quote).toMatchObject({ sourceKind: "book", author: "An Author", sourceTitle: null });
+    expect(bookCount()).toBe(0);
+  });
+
+  test("a song doesn't take a book extraction's title or book", () => {
+    const existing = s.quote({ text: LYRIC });
+    updateQuote(db, existing.id, { sourceKind: "song" });
+    const { quote } = upsertQuote(db, {
+      text: LYRIC,
+      author: "An Author",
+      sourceTitle: "A Book",
+      bookSource: "caption",
+    });
+    expect(quote).toMatchObject({ sourceKind: "song", sourceTitle: null, bookId: null });
+    expect(bookCount()).toBe(0);
+  });
+});
+
 describe("searchQuotes kind", () => {
   test("kind=song returns only songs; noBook excludes non-book quotes", () => {
     const book = s.quote({ text: "Book quote without a book" });
@@ -246,5 +293,44 @@ describe("mergeQuotes kind", () => {
     updateQuote(db, drop.id, { sourceKind: "song" });
     mergeQuotes(db, keep.id, drop.id);
     expect(getQuote(db, keep.id)).toMatchObject({ sourceKind: "book", bookId: keep.bookId });
+  });
+
+  test("a bare kept song takes a dropped book quote's kind and book", () => {
+    const keep = s.quote({ text: LYRIC });
+    updateQuote(db, keep.id, { sourceKind: "song" });
+    const { quote: drop } = upsertQuote(db, { text: `${LYRIC} again`, sourceTitle: "A Book" });
+    expect(drop.bookId).not.toBeNull();
+    mergeQuotes(db, keep.id, drop.id);
+    expect(getQuote(db, keep.id)).toMatchObject({
+      sourceKind: "book",
+      sourceTitle: "A Book",
+      bookId: drop.bookId,
+    });
+  });
+
+  test("an attributed kept song drops the book quote's book, deleting it once empty", () => {
+    const keep = s.quote({ text: LYRIC, author: "Paper Lanterns" });
+    updateQuote(db, keep.id, { sourceKind: "song" });
+    const { quote: drop } = upsertQuote(db, { text: `${LYRIC} again`, sourceTitle: "A Book" });
+    mergeQuotes(db, keep.id, drop.id);
+    expect(getQuote(db, keep.id)).toMatchObject({
+      sourceKind: "song",
+      sourceTitle: null,
+      bookId: null,
+    });
+    expect(bookCount()).toBe(0);
+  });
+
+  test("an attributed kept book quote doesn't take a dropped song's title", () => {
+    const keep = s.quote({ text: LYRIC, author: "An Author" });
+    const drop = s.quote({ text: `${LYRIC} again`, sourceTitle: "Northbound Static" });
+    updateQuote(db, drop.id, { sourceKind: "song" });
+    mergeQuotes(db, keep.id, drop.id);
+    expect(getQuote(db, keep.id)).toMatchObject({
+      sourceKind: "book",
+      author: "An Author",
+      sourceTitle: null,
+      bookId: null,
+    });
   });
 });
